@@ -46,7 +46,8 @@
     offlineBasemap: false,
     carriers: [],
     hiddenCarriers: new Set(),
-    visibleFlights: []
+    visibleFlights: [],
+    statusFilter: 'all'
   };
 
   function $(id) { return document.getElementById(id); }
@@ -99,24 +100,29 @@
       'emergency vehicle', 'service vehicle', 'point obstacle', 'cluster obstacle', 'line obstacle'][c] || '—';
   }
 
-  // Hover tooltip at plane level: the typical flight data at a glance.
-  // Click the plane for the full aviation detail popup.
+  // Hover tooltip on any flight (airborne or on ground): the full data set.
   function tooltipHtml(f) {
+    function cell(k, v) { return '<span class="tk">' + k + '</span><span class="tv">' + v + '</span>'; }
     return '<div class="tip">' +
       '<div class="tip-head"><span class="cs" style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</span>' +
       '<span class="ek">' + esc(ekOf(f)) + '</span>' +
       '<span class="tip-carrier">' + esc(f.carrier ? f.carrier.name : '') + '</span></div>' +
       '<div class="tip-route">' + airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival) + '</div>' +
-      '<div class="tip-grid">' +
-      '<span>Altitude <b>' + fmtAlt(f) + '</b></span>' +
-      '<span>Speed <b>' + fmtSpd(f) + '</b></span>' +
-      '<span>Heading <b>' + fmtHdg(f) + '</b></span>' +
-      '<span>V/S <b>' + fmtVr(f) + '</b></span>' +
-      '</div>' +
-      '<div class="tip-sub">' + (f.onGround ? 'On ground' : 'Airborne') +
-      (f.lat != null ? ' · ' + f.lat.toFixed(3) + ', ' + f.lon.toFixed(3) : '') +
-      ' · updated ' + relTime(f.lastContact) + ' · click for all details</div>' +
-      '</div>';
+      '<div class="tip-full">' +
+      cell('Altitude', fmtAlt(f) + (f.altitudeM != null ? ' (' + fmtInt(Math.round(f.altitudeM)) + ' m)' : '')) +
+      cell('Geo altitude', f.geoAltitudeM != null ? fmtInt(Math.round(f.geoAltitudeM)) + ' m' : '—') +
+      cell('Speed', fmtSpd(f) + (f.speedMs != null ? ' (' + fmtInt(Math.round(f.speedMs * 3.6)) + ' km/h)' : '')) +
+      cell('Heading', fmtHdg(f)) +
+      cell('Vertical rate', fmtVr(f) + (f.verticalRateMps != null ? ' (' + f.verticalRateMps.toFixed(1) + ' m/s)' : '')) +
+      cell('Status', f.onGround ? 'On ground' : 'Airborne') +
+      cell('Position', f.lat != null ? f.lat.toFixed(4) + ', ' + f.lon.toFixed(4) : '—') +
+      cell('Country', esc(f.country || '—')) +
+      cell('Squawk', esc(f.squawk || '—')) +
+      cell('Pos source', posSourceName(f.positionSource)) +
+      cell('Category', categoryName(f.category)) +
+      cell('Last contact', relTime(f.lastContact) + (f.timePosition ? ' (fix ' + relTime(f.timePosition) + ')' : '')) +
+      cell('ICAO24', esc(f.icao24)) +
+      '</div></div>';
   }
 
   function airportLabel(ap, code) {
@@ -522,7 +528,10 @@
       new Date(asOf * 1000).toISOString().slice(0, 10) + ' ' + fmtHM((asOf % 86400) / 60 | 0);
 
     state.visibleFlights = (p.flights || []).filter(function (f) {
-      return !(f.carrier && state.hiddenCarriers.has(f.carrier.id));
+      if (f.carrier && state.hiddenCarriers.has(f.carrier.id)) return false;
+      if (state.statusFilter === 'airborne' && f.onGround) return false;
+      if (state.statusFilter === 'ground' && !f.onGround) return false;
+      return true;
     });
 
     var useCluster = state.view !== 'lines';
@@ -596,6 +605,8 @@
         '<div class="fl-top"><span><span class="fl-cs">' + esc(f.callsign) + '</span><span class="fl-ek">' + esc(ekOf(f)) + '</span></span><span class="fl-alt">' + fmtAlt(f) + '</span></div>' +
         '<div class="fl-route">' + routeText(f) + '</div>' +
         '<div class="fl-meta">' + fmtSpd(f) + (f.onGround ? ' · on ground' : '') + '</div>';
+      div.title = f.callsign + ' / ' + ekOf(f) + (f.carrier ? ' · ' + f.carrier.name : '') + ' · ' + routeText(f) +
+        ' · ' + fmtAlt(f) + ' · ' + fmtSpd(f) + (f.onGround ? ' · on ground' : ' · airborne');
       div.addEventListener('click', function () { select(f.icao24); });
       list.appendChild(div);
     });
@@ -984,6 +995,10 @@
     });
 
     $('search').addEventListener('input', renderList);
+    $('status-filter').addEventListener('change', function (e) {
+      state.statusFilter = e.target.value;
+      if (state.payload) apply(state.payload);
+    });
     $('refresh-btn').addEventListener('click', tick);
     $('trails').addEventListener('change', function (e) { setTrailsEnabled(e.target.checked); });
     $('follow').addEventListener('change', function (e) { state.follow = e.target.checked; });
