@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Emirates Flight Tracker — Live &amp; Historical</title>
+<title>Middle East Airlines Tracker — Live &amp; Historical</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23d71920' d='M21,16v-2l-8-5V3.5C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1v-1.5L13,19v-5.5L21,16z'/></svg>">
 <link rel="stylesheet" href="/vendor/leaflet.css">
 <link rel="stylesheet" href="/vendor/MarkerCluster.css">
@@ -15,8 +15,8 @@
   <div class="brand">
     <span class="brand-icon">✈</span>
     <div>
-      <h1>Emirates Flight Tracker</h1>
-      <p>Live &amp; historical Emirates flights worldwide</p>
+      <h1>Middle East Airlines Tracker</h1>
+      <p>Emirates · flydubai · Air Arabia · Qatar Airways · Saudia · Nas Air · Etihad</p>
     </div>
   </div>
   <div class="seg">
@@ -50,6 +50,7 @@
       <option value="lines">Lines only</option>
     </select>
   </div>
+  <div id="legend"></div>
   <div class="stats">
     <div class="stat"><span class="stat-num" id="stat-count">–</span><span class="stat-label">airborne</span></div>
     <div class="stat"><span class="stat-num" id="stat-total">–</span><span class="stat-label">total</span></div>
@@ -72,6 +73,20 @@
   <div id="chartbar">
     <canvas id="chart"></canvas>
     <div id="chart-label">typical daily schedule — click to scrub time</div>
+  </div>
+  <button id="chat-toggle" title="Ask the flight assistant">💬</button>
+  <div id="chat-panel" class="hidden">
+    <div class="chat-head"><span>✈ Flight assistant</span><button id="chat-close" title="Close">✕</button></div>
+    <div id="chat-log"></div>
+    <div class="chat-quick">
+      <button data-q="Which flight is currently the highest?">Highest</button>
+      <button data-q="List all flights heading to London Heathrow (LHR).">To LHR</button>
+      <button data-q="Which flight is the fastest right now?">Fastest</button>
+    </div>
+    <div class="chat-input-row">
+      <input id="chat-input" placeholder="Ask about any flight… (e.g. where is EK201?)" autocomplete="off">
+      <button id="chat-send" title="Send">➤</button>
+    </div>
   </div>
 </div>
 <script src="/vendor/leaflet.js"></script>

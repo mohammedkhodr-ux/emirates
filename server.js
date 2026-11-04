@@ -7,6 +7,7 @@ const { OpenskyClient } = require('./lib/opensky');
 const { demoFlights, demoTrack } = require('./lib/demo');
 const { scheduleForDate } = require('./lib/schedule');
 const { airportInfo } = require('./lib/airports');
+const { CARRIERS, carrierOf, flightNumber } = require('./lib/carriers');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -20,8 +21,12 @@ const client = new OpenskyClient({
   clientSecret: process.env.OPENSKY_CLIENT_SECRET || null
 });
 
-// Emirates operates under the ATC callsign prefix "UAE" (e.g. UAE201).
-const EMIRATES_CALLSIGN = /^UAE/i;
+// Tracked Middle East carriers are matched by ATC callsign prefix (see lib/carriers.js).
+function isTracked(callsign) { return !!carrierOf(callsign); }
+function carrierTag(f) {
+  const c = carrierOf(f.callsign);
+  return c ? { id: c.id, name: c.name, iata: c.iata, color: c.color } : null;
+}
 
 let cache = loadCache();
 let lastUpstreamAt = 0;
@@ -60,6 +65,8 @@ function mapState(s, routesByCallsign) {
   return enrich({
     icao24: s[0],
     callsign,
+    carrier: carrierTag({ callsign }),
+    flightNumber: flightNumber(callsign),
     country: s[2] || null,
     timePosition: s[3] ?? null,
     lastContact: s[4] ?? null,
@@ -86,8 +93,8 @@ function mapState(s, routesByCallsign) {
 function demoPayload(nowMs) {
   const nowSec = Math.floor(nowMs / 1000);
   const flights = demoFlights(nowSec)
-    .filter(f => EMIRATES_CALLSIGN.test(f.callsign))
-    .map(enrich);
+    .filter(f => isTracked(f.callsign))
+    .map(f => enrich({ ...f, carrier: carrierTag(f), flightNumber: flightNumber(f.callsign) }));
   flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
   return {
     source: 'demo',
@@ -131,7 +138,7 @@ async function fetchUpstream() {
   } catch { /* route info is best-effort */ }
 
   const flights = (data.states || [])
-    .filter(s => s[1] && EMIRATES_CALLSIGN.test(String(s[1]).trim()))
+    .filter(s => s[1] && isTracked(String(s[1]).trim()))
     .map(s => mapState(s, routesByCallsign));
   flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
 
@@ -199,6 +206,84 @@ function sendJson(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+function readBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', c => {
+      size += c.length;
+      if (size > maxBytes) { reject(new Error('body too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+function flightsContext(flights, nowSec) {
+  return flights.slice(0, 150).map(f => {
+    const c = f.carrier || carrierOf(f.callsign) || { name: 'unknown' };
+    return `${f.callsign}/${f.flightNumber || ''} ${c.name} ${f.departure || '?'}->${f.arrival || '?'} ` +
+      `pos=${f.lat != null ? f.lat.toFixed(2) + ',' + f.lon.toFixed(2) : 'n/a'} ` +
+      `alt=${f.altitudeFt != null ? f.altitudeFt + 'ft' : 'n/a'} ` +
+      `spd=${f.speedKn != null ? f.speedKn + 'kn' : 'n/a'} ` +
+      `hdg=${f.track != null ? Math.round(f.track) + 'deg' : 'n/a'} ` +
+      `vr=${f.verticalRateFpm != null ? f.verticalRateFpm + 'fpm' : 'n/a'} ` +
+      `${f.onGround ? 'on-ground' : 'airborne'} ` +
+      `last=${f.lastContact ? Math.max(0, nowSec - f.lastContact) + 's-ago' : 'n/a'} icao24=${f.icao24}`;
+  }).join('\n');
+}
+
+// Chat agent: answers questions about the currently tracked flights.
+// Uses the caller's gateway token (Authorization header forwarded by the app
+// gateway) or MISTRAL_API_KEY, so usage is billed to the calling user.
+async function handleChat(req, res) {
+  try {
+    const data = JSON.parse(await readBody(req, 65536) || '{}');
+    const messages = Array.isArray(data.messages) ? data.messages.slice(-12) : [];
+    if (!messages.length || typeof messages[messages.length - 1].content !== 'string') {
+      sendJson(res, 400, { error: 'messages[] with role/content required' });
+      return;
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    const flights = (cache && cache.flights) || demoPayload(Date.now()).flights;
+    const sys = {
+      role: 'system',
+      content: 'You are a concise flight-data assistant for a live Middle East airline tracker ' +
+        '(Emirates, flydubai, Air Arabia, Qatar Airways, Saudia, Nas Air, Etihad). ' +
+        'Answer questions about the flights using ONLY the snapshot below. ' +
+        'Snapshot (UTC ' + new Date(nowSec * 1000).toISOString() + '):\n' +
+        (flightsContext(flights, nowSec) || '(no flights in snapshot)')
+    };
+    const auth = req.headers.authorization || (process.env.MISTRAL_API_KEY ? 'Bearer ' + process.env.MISTRAL_API_KEY : null);
+    if (!auth) {
+      sendJson(res, 503, { error: 'no model credentials: call via the app gateway (user token) or set MISTRAL_API_KEY' });
+      return;
+    }
+    const r = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: auth },
+      body: JSON.stringify({
+        model: process.env.CHAT_MODEL || 'mistral-small-latest',
+        messages: [sys, ...messages],
+        temperature: 0.3,
+        max_tokens: 500
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      sendJson(res, 502, { error: 'model API HTTP ' + r.status + ': ' + t.slice(0, 300) });
+      return;
+    }
+    const j = await r.json();
+    const reply = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+    sendJson(res, 200, { reply });
+  } catch (e) {
+    sendJson(res, 500, { error: String((e && e.message) || e) });
+  }
+}
+
 function serveStatic(req, res, pathname) {
   let rel = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.normalize(path.join(PUBLIC_DIR, rel));
@@ -232,7 +317,7 @@ async function routesByCallsignAround(timeSec) {
 function statesPayload(data, updatedAtMs, historical, timeSec) {
   return routesByCallsignAround(timeSec || Math.floor(Date.now() / 1000)).then(routes => {
     const flights = (data.states || [])
-      .filter(s => s[1] && EMIRATES_CALLSIGN.test(String(s[1]).trim()))
+      .filter(s => s[1] && isTracked(String(s[1]).trim()))
       .map(s => mapState(s, routes));
     flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
     return {
@@ -338,6 +423,14 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, sched);
     return;
   }
+  if (p === '/api/carriers') {
+    sendJson(res, 200, { carriers: CARRIERS });
+    return;
+  }
+  if (p === '/api/chat' && req.method === 'POST') {
+    await handleChat(req, res);
+    return;
+  }
   if (p === '/api/health') {
     sendJson(res, 200, { ok: true, demo: DEMO, hasCache: !!cache, coolingDown: cooldownUntil > Date.now() });
     return;
@@ -346,5 +439,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Emirates Live Tracker running at http://${HOST}:${PORT}  (demo=${DEMO}, min upstream interval=${MIN_UPSTREAM_MS / 1000}s)`);
+  console.log(`Middle East flight tracker running at http://${HOST}:${PORT}  (demo=${DEMO}, min upstream interval=${MIN_UPSTREAM_MS / 1000}s)`);
 });

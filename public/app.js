@@ -43,7 +43,10 @@
     view: 'both',
     schedule: null,
     tileErrors: 0,
-    offlineBasemap: false
+    offlineBasemap: false,
+    carriers: [],
+    hiddenCarriers: new Set(),
+    visibleFlights: []
   };
 
   function $(id) { return document.getElementById(id); }
@@ -72,16 +75,32 @@
     return Math.floor(Date.parse(state.histDate + 'T00:00:00Z') / 1000) + state.histMin * 60;
   }
 
+  function colorOf(f) { return (f.carrier && f.carrier.color) || '#d71920'; }
+
   function planeIcon(f) {
     var rot = f.track != null ? f.track : 0;
+    var color = f.onGround ? '#7d8590' : colorOf(f);
     return L.divIcon({
       className: 'plane-wrap',
       html: '<div class="plane' + (f.onGround ? ' ground' : '') + '" style="transform:rotate(' + rot + 'deg)">' +
-        '<svg viewBox="0 0 24 24" width="28" height="28"><path d="' + PLANE_PATH + '"/></svg></div>',
+        '<svg viewBox="0 0 24 24" width="28" height="28" style="fill:' + color + '"><path d="' + PLANE_PATH + '"/></svg></div>',
       iconSize: [34, 34],
       iconAnchor: [17, 17],
       popupAnchor: [0, -16]
     });
+  }
+
+  // Hover tooltip with all relevant data of a flight.
+  function tooltipHtml(f) {
+    return '<div class="tip">' +
+      '<div class="tip-head"><span class="cs" style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</span>' +
+      '<span class="ek">' + esc(ekOf(f)) + '</span><span class="tip-carrier">' + esc(f.carrier ? f.carrier.name : '') + '</span></div>' +
+      '<div class="tip-route">' + routeText(f) + '</div>' +
+      '<div>' + fmtAlt(f) + ' · ' + fmtSpd(f) + ' · hdg ' + fmtHdg(f) + ' · ' + fmtVr(f) + '</div>' +
+      '<div class="tip-sub">' + (f.onGround ? 'on ground' : 'airborne') +
+      (f.lat != null ? ' · ' + f.lat.toFixed(3) + ', ' + f.lon.toFixed(3) : ' · no fix') +
+      ' · ' + relTime(f.lastContact) + '</div>' +
+      '</div>';
   }
 
   function airportLabel(ap, code) {
@@ -93,13 +112,13 @@
     return esc(f.departure || '?') + ' → ' + esc(f.arrival || '?');
   }
 
-  // Emirates ATC callsign is UAE###; the commercial flight number is EK###.
-  function ekOf(f) { return f.callsign ? f.callsign.replace(/^UAE/i, 'EK') : ''; }
+  // ATC callsign is e.g. UAE###; the commercial flight number is EK### (per-carrier IATA).
+  function ekOf(f) { return f.flightNumber || (f.callsign ? f.callsign.replace(/^UAE/i, 'EK') : ''); }
 
   function popupHtml(f) {
     function row(k, v) { return '<tr><td>' + k + '</td><td>' + v + '</td></tr>'; }
     return '<div class="popup">' +
-      '<div class="popup-head"><span class="cs">' + esc(f.callsign) + '</span><span class="ek">' + esc(ekOf(f)) + '</span><span class="tag">Emirates</span></div>' +
+      '<div class="popup-head"><span class="cs" style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</span><span class="ek">' + esc(ekOf(f)) + '</span><span class="tag">' + esc(f.carrier ? f.carrier.name : 'Airline') + '</span></div>' +
       '<div class="popup-route">' + airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival) + '</div>' +
       '<table class="popup-table">' +
       row('Position', f.lat != null ? f.lat.toFixed(4) + ', ' + f.lon.toFixed(4) : '—') +
@@ -201,14 +220,36 @@
     requestAnimationFrame(animateLoop);
   }
 
+  // Planned path of one flight split at the current position:
+  // flown = departure -> current position, remaining = current position -> destination.
+  function routeSegments(f) {
+    var dep = f.departureAirport, arr = f.arrivalAirport;
+    if (!dep || !arr || dep.lat == null || arr.lat == null) return null;
+    var pts = greatCircle({ lat: dep.lat, lon: dep.lon }, { lat: arr.lat, lon: arr.lon }, 64);
+    if (f.lat == null || f.lon == null) return { flown: null, remaining: pts };
+    var pos = L.latLng(f.lat, f.lon), best = 0, bestD = Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      var d = pos.distanceTo(L.latLng(pts[i][0], pts[i][1]));
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return {
+      flown: pts.slice(0, best + 1).concat([[f.lat, f.lon]]),
+      remaining: [[f.lat, f.lon]].concat(pts.slice(best + 1))
+    };
+  }
+
   function drawRoute(f) {
     if (state.routeLayer) { state.map.removeLayer(state.routeLayer); state.routeLayer = null; }
-    var dep = f.departureAirport, arr = f.arrivalAirport;
-    if (!dep || !arr || dep.lat == null || arr.lat == null) return;
+    var seg = routeSegments(f);
+    if (!seg) return;
     var g = L.layerGroup();
-    L.polyline(greatCircle({ lat: dep.lat, lon: dep.lon }, { lat: arr.lat, lon: arr.lon }, 80), {
-      color: '#d4af37', weight: 2.5, dashArray: '6 8', opacity: 0.9
-    }).addTo(g);
+    if (seg.flown && seg.flown.length >= 2) {
+      L.polyline(seg.flown, { color: '#d4af37', weight: 3, opacity: 0.95 }).addTo(g);
+    }
+    if (seg.remaining && seg.remaining.length >= 2) {
+      L.polyline(seg.remaining, { color: '#d4af37', weight: 2.5, dashArray: '6 8', opacity: 0.9 }).addTo(g);
+    }
+    var dep = f.departureAirport, arr = f.arrivalAirport;
     [[dep, f.departure], [arr, f.arrival]].forEach(function (pair) {
       var ap = pair[0], code = pair[1];
       L.circleMarker([ap.lat, ap.lon], { radius: 6, color: '#d4af37', weight: 2, fillColor: '#d4af37', fillOpacity: 0.9 })
@@ -221,32 +262,38 @@
 
   function drawAllRoutes() {
     if (state.allRoutesLayer) { state.map.removeLayer(state.allRoutesLayer); state.allRoutesLayer = null; }
-    if (state.view === 'markers' || !state.payload) return;
+    var flights = state.visibleFlights || [];
+    if (state.view === 'markers' || !flights.length) return;
     var g = L.layerGroup();
-    state.payload.flights.forEach(function (f) {
-      var dep = f.departureAirport, arr = f.arrivalAirport;
-      if (!dep || !arr || dep.lat == null || arr.lat == null) return;
+    flights.forEach(function (f) {
+      var seg = routeSegments(f);
+      if (!seg) return;
       var selected = state.selected === f.icao24;
-      var line = L.polyline(greatCircle({ lat: dep.lat, lon: dep.lon }, { lat: arr.lat, lon: arr.lon }, 64), {
-        color: selected ? '#d71920' : 'rgba(212,175,55,0.45)',
-        weight: selected ? 3 : 1.4,
-        dashArray: selected ? null : '4 7',
-        opacity: 0.9,
-        interactive: state.view === 'lines'
-      });
-      if (state.view === 'lines') {
-        line.on('click', function () { select(f.icao24, false); });
-        line.bindTooltip(esc(f.callsign) + ' / ' + esc(ekOf(f)) + ' · ' + routeText(f), { direction: 'top', sticky: true });
+      var color = selected ? '#ffffff' : colorOf(f);
+      var interactive = state.view === 'lines';
+      function bind(l) {
+        if (!interactive) return;
+        l.on('click', function () { select(f.icao24, false); });
+        l.bindTooltip(function () { return tooltipHtml(f); }, { direction: 'top', sticky: true, className: 'plane-tip' });
       }
-      line.addTo(g);
+      if (seg.flown && seg.flown.length >= 2) {
+        bind(L.polyline(seg.flown, { color: color, weight: selected ? 3 : 2, opacity: 0.95, interactive: interactive }).addTo(g));
+      }
+      if (seg.remaining && seg.remaining.length >= 2) {
+        bind(L.polyline(seg.remaining, { color: color, weight: selected ? 2.5 : 1.4, dashArray: '4 7', opacity: 0.8, interactive: interactive }).addTo(g));
+      }
       if (f.lat != null && f.lon != null) {
-        L.circleMarker([f.lat, f.lon], {
+        var cm = L.circleMarker([f.lat, f.lon], {
           radius: selected ? 6 : 3.5,
-          color: selected ? '#fff' : '#d4af37',
-          fillColor: selected ? '#d71920' : '#d4af37',
+          color: '#fff',
+          fillColor: selected ? '#ffffff' : colorOf(f),
           fillOpacity: 0.95, weight: 1.5,
-          interactive: state.view === 'lines'
-        }).on('click', function () { select(f.icao24, false); }).addTo(g);
+          interactive: interactive
+        }).addTo(g);
+        if (interactive) {
+          cm.on('click', function () { select(f.icao24, false); });
+          cm.bindTooltip(function () { return tooltipHtml(f); }, { direction: 'top', className: 'plane-tip' });
+        }
       }
     });
     g.addTo(state.map);
@@ -400,7 +447,7 @@
   }
 
   function select(icao, fly) {
-    var flights = state.payload ? state.payload.flights : [];
+    var flights = state.visibleFlights || [];
     var f = null;
     for (var i = 0; i < flights.length; i++) if (flights[i].icao24 === icao) { f = flights[i]; break; }
     if (!f) return;
@@ -446,12 +493,16 @@
     $('stat-updated').textContent = (p.historical ? 'as of ' : 'updated ') +
       new Date(asOf * 1000).toISOString().slice(0, 10) + ' ' + fmtHM((asOf % 86400) / 60 | 0);
 
+    state.visibleFlights = (p.flights || []).filter(function (f) {
+      return !(f.carrier && state.hiddenCarriers.has(f.carrier.id));
+    });
+
     var useCluster = state.view !== 'lines';
     if (useCluster && !state.map.hasLayer(state.cluster)) state.map.addLayer(state.cluster);
     if (!useCluster && state.map.hasLayer(state.cluster)) state.map.removeLayer(state.cluster);
 
     var seen = new Set();
-    p.flights.forEach(function (f) {
+    state.visibleFlights.forEach(function (f) {
       seen.add(f.icao24);
       var hasPos = f.lat != null && f.lon != null;
       var m = state.markers.get(f.icao24);
@@ -460,6 +511,7 @@
           m = L.marker([f.lat, f.lon], { icon: planeIcon(f), title: f.callsign + ' / ' + ekOf(f) });
           m.on('click', function () { select(f.icao24); });
           m.bindPopup(function () { return popupHtml(m.flightData); }, { maxWidth: 290 });
+          m.bindTooltip(function () { return tooltipHtml(m.flightData); }, { sticky: true, direction: 'top', className: 'plane-tip' });
           state.cluster.addLayer(m);
           state.markers.set(f.icao24, m);
         } else {
@@ -468,6 +520,7 @@
         }
         m.flightData = f;
         if (m.isPopupOpen()) m.setPopupContent(popupHtml(f));
+        if (m.isTooltipOpen()) m.setTooltipContent(tooltipHtml(f));
       } else if (m) {
         state.cluster.removeLayer(m);
         state.markers.delete(f.icao24);
@@ -479,7 +532,8 @@
 
     drawAllRoutes();
     renderList();
-    if (!state.fitted && p.flights.some(function (f) { return f.lat != null; })) {
+    renderLegend();
+    if (!state.fitted && state.visibleFlights.some(function (f) { return f.lat != null; })) {
       fitAll();
       state.fitted = true;
     }
@@ -489,7 +543,7 @@
     var q = ($('search').value || '').trim().toLowerCase();
     var list = $('flight-list');
     list.innerHTML = '';
-    var flights = (state.payload ? state.payload.flights : []).slice()
+    var flights = (state.visibleFlights || []).slice()
       .sort(function (a, b) { return a.callsign.localeCompare(b.callsign); });
     var shown = 0;
     flights.forEach(function (f) {
@@ -514,8 +568,8 @@
   function fitAll() {
     var pts = [];
     state.markers.forEach(function (m) { pts.push(m.getLatLng()); });
-    if (state.payload) {
-      state.payload.flights.forEach(function (f) { if (f.lat != null) pts.push([f.lat, f.lon]); });
+    if (state.visibleFlights) {
+      state.visibleFlights.forEach(function (f) { if (f.lat != null) pts.push([f.lat, f.lon]); });
     }
     if (!pts.length) { state.map.setView([24, 45], 3); return; }
     state.map.fitBounds(L.latLngBounds(pts).pad(0.12), { maxZoom: 6 });
@@ -536,6 +590,106 @@
     if (state.mode === 'live') {
       state.nextAt = Date.now() + REFRESH_MS;
       state.nextTimer = setTimeout(tick, REFRESH_MS);
+    }
+  }
+
+  function loadCarriers() {
+    fetch('/api/carriers', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      state.carriers = (j && j.carriers) || [];
+      renderLegend();
+    }).catch(function () {
+      state.carriers = [
+        { id: 'EK', name: 'Emirates', color: '#d71920' },
+        { id: 'FZ', name: 'flydubai', color: '#22c55e' },
+        { id: 'G9', name: 'Air Arabia', color: '#fb923c' },
+        { id: 'QR', name: 'Qatar Airways', color: '#c026d3' },
+        { id: 'SV', name: 'Saudia', color: '#38bdf8' },
+        { id: 'NA', name: 'Nas Air', color: '#a855f7' },
+        { id: 'EY', name: 'Etihad Airways', color: '#fbbf24' }
+      ];
+      renderLegend();
+    });
+  }
+
+  function renderLegend() {
+    var el = $('legend');
+    if (!el) return;
+    el.innerHTML = '';
+    var counts = {};
+    (state.visibleFlights || []).forEach(function (f) { if (f.carrier) counts[f.carrier.id] = (counts[f.carrier.id] || 0) + 1; });
+    (state.carriers || []).forEach(function (c) {
+      var b = document.createElement('button');
+      b.className = 'chip' + (state.hiddenCarriers.has(c.id) ? ' off' : '');
+      b.title = 'Show / hide ' + c.name;
+      b.innerHTML = '<span class="dot" style="background:' + esc(c.color) + '"></span>' + esc(c.name) + ' <b>' + (counts[c.id] || 0) + '</b>';
+      b.addEventListener('click', function () {
+        if (state.hiddenCarriers.has(c.id)) state.hiddenCarriers.delete(c.id);
+        else state.hiddenCarriers.add(c.id);
+        renderLegend();
+        if (state.payload) apply(state.payload);
+      });
+      el.appendChild(b);
+    });
+  }
+
+  var chat = { history: [], sending: false };
+
+  function chatScroll() { var l = $('chat-log'); if (l) l.scrollTop = l.scrollHeight; }
+  function chatAdd(role, text) {
+    var l = $('chat-log');
+    if (!l) return null;
+    var d = document.createElement('div');
+    d.className = 'msg ' + role;
+    d.textContent = text;
+    l.appendChild(d);
+    chatScroll();
+    return d;
+  }
+
+  async function chatSend(text) {
+    text = (text || '').trim();
+    if (!text || chat.sending) return;
+    chat.sending = true;
+    chat.history.push({ role: 'user', content: text });
+    chatAdd('user', text);
+    var pending = chatAdd('bot', '…');
+    try {
+      var r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: chat.history })
+      });
+      var j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      chat.history.push({ role: 'assistant', content: j.reply });
+      if (pending) pending.textContent = j.reply;
+      chatScroll();
+    } catch (e) {
+      if (pending) pending.textContent = '⚠ ' + e.message;
+      chatScroll();
+    } finally {
+      chat.sending = false;
+      var inp = $('chat-input');
+      if (inp) inp.focus();
+    }
+  }
+
+  function initChat() {
+    var toggle = $('chat-toggle'), panel = $('chat-panel');
+    if (!toggle || !panel) return;
+    toggle.addEventListener('click', function () {
+      panel.classList.toggle('hidden');
+      var inp = $('chat-input');
+      if (inp && !panel.classList.contains('hidden')) inp.focus();
+    });
+    $('chat-close').addEventListener('click', function () { panel.classList.add('hidden'); });
+    $('chat-send').addEventListener('click', function () { chatSend($('chat-input').value); $('chat-input').value = ''; });
+    $('chat-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { chatSend(e.target.value); e.target.value = ''; }
+    });
+    var quick = document.querySelectorAll('.chat-quick button');
+    for (var i = 0; i < quick.length; i++) {
+      quick[i].addEventListener('click', function () { chatSend(this.dataset.q); });
     }
   }
 
@@ -682,6 +836,8 @@
 
     window.addEventListener('resize', drawChart);
 
+    loadCarriers();
+    initChat();
     loadCountries();
     loadSchedule(state.histDate);
     tick();
