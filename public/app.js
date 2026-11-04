@@ -235,7 +235,15 @@
       var f = m.flightData;
       if (!f || f.lat == null || f.onGround || !f.speedMs || f.track == null) return;
       m.setLatLng(destinationPoint(m.getLatLng(), f.speedMs * dt, f.track));
-      m.setIcon(planeIcon(f));
+      // Only re-create the icon when the rotation actually changes — replacing
+      // the icon DOM node every frame would fire mouseout and close the hover
+      // tooltip instantly.
+      var rot = f.track != null ? Math.round(f.track) : 0;
+      if (m._lastRot !== rot || m._lastGround !== f.onGround) {
+        m._lastRot = rot;
+        m._lastGround = f.onGround;
+        m.setIcon(planeIcon(f));
+      }
       pushTrail(icao, m.getLatLng(), now);
       if (state.follow && state.selected === icao) state.map.panTo(m.getLatLng(), { animate: false });
     });
@@ -292,7 +300,7 @@
       if (!seg) return;
       var selected = state.selected === f.icao24;
       var color = selected ? '#ffffff' : colorOf(f);
-      var interactive = state.view === 'lines';
+      var interactive = true;
       function bind(l) {
         if (!interactive) return;
         l.on('click', function () { select(f.icao24, false); });
@@ -530,15 +538,22 @@
       var m = state.markers.get(f.icao24);
       if (hasPos && useCluster) {
         if (!m) {
-          m = L.marker([f.lat, f.lon], { icon: planeIcon(f), title: f.callsign + ' / ' + ekOf(f) });
+          m = L.marker([f.lat, f.lon], { icon: planeIcon(f) });
           m.on('click', function () { select(f.icao24); });
           m.bindPopup(function () { return popupHtml(m.flightData); }, { maxWidth: 290 });
           m.bindTooltip(function () { return tooltipHtml(m.flightData); }, { sticky: true, direction: 'top', className: 'plane-tip' });
+          m._lastRot = f.track != null ? Math.round(f.track) : 0;
+          m._lastGround = !!f.onGround;
           state.cluster.addLayer(m);
           state.markers.set(f.icao24, m);
         } else {
           m.setLatLng([f.lat, f.lon]);
-          m.setIcon(planeIcon(f));
+          var rot = f.track != null ? Math.round(f.track) : 0;
+          if (m._lastRot !== rot || m._lastGround !== f.onGround) {
+            m._lastRot = rot;
+            m._lastGround = f.onGround;
+            m.setIcon(planeIcon(f));
+          }
         }
         m.flightData = f;
         if (m.isPopupOpen()) m.setPopupContent(popupHtml(f));
@@ -615,6 +630,22 @@
       state.nextAt = Date.now() + REFRESH_MS;
       state.nextTimer = setTimeout(tick, REFRESH_MS);
     }
+  }
+
+  // Hovering a cluster of planes lists every flight inside it.
+  function clusterTooltipHtml(childMarkers) {
+    var rows = '', n = 0;
+    childMarkers.forEach(function (cm) {
+      var f = cm.flightData;
+      if (!f || n >= 8) return;
+      n++;
+      rows += '<tr><td><b style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</b>/' + esc(ekOf(f)) + '</td>' +
+        '<td>' + fmtAlt(f) + ' · ' + fmtSpd(f) + ' · ' + routeText(f) + '</td></tr>';
+    });
+    var extra = childMarkers.length > n
+      ? '<tr><td colspan="2">… and ' + (childMarkers.length - n) + ' more — click cluster to zoom</td></tr>' : '';
+    return '<div class="tip"><b>' + childMarkers.length + ' flight' + (childMarkers.length === 1 ? '' : 's') + ' in this cluster</b>' +
+      '<table class="tip-table">' + rows + extra + '</table></div>';
   }
 
   function loadCarriers() {
@@ -924,6 +955,12 @@
       disableClusteringAtZoom: 9,
       spiderfyOnMaxZoom: true,
       showCoverageOnHover: false
+    });
+    state.cluster.on('clustermouseover', function (e) {
+      var layer = e.layer;
+      if (!layer.getTooltip()) layer.bindTooltip('', { sticky: true, direction: 'top', className: 'plane-tip' });
+      layer.setTooltipContent(clusterTooltipHtml(layer.getAllChildMarkers()));
+      layer.openTooltip();
     });
     state.map.addLayer(state.cluster);
 
