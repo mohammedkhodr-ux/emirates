@@ -99,26 +99,24 @@
       'emergency vehicle', 'service vehicle', 'point obstacle', 'cluster obstacle', 'line obstacle'][c] || '—';
   }
 
-  // Hover tooltip: every aviation detail available for the flight.
+  // Hover tooltip at plane level: the typical flight data at a glance.
+  // Click the plane for the full aviation detail popup.
   function tooltipHtml(f) {
-    function row(k, v) { return '<tr><td>' + k + '</td><td>' + v + '</td></tr>'; }
-    return '<div class="tip"><table class="tip-table">' +
-      row('Flight', '<b style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</b> / <span class="ek">' + esc(ekOf(f)) + '</span>' + (f.carrier ? ' · ' + esc(f.carrier.name) : '')) +
-      row('Route', airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival)) +
-      row('Position', f.lat != null ? f.lat.toFixed(4) + ', ' + f.lon.toFixed(4) : '—') +
-      row('Altitude', fmtAlt(f) + (f.altitudeM != null ? ' (' + fmtInt(Math.round(f.altitudeM)) + ' m)' : '')) +
-      row('Geo altitude', f.geoAltitudeM != null ? fmtInt(Math.round(f.geoAltitudeM)) + ' m (' + fmtInt(Math.round(f.geoAltitudeM * 3.28084)) + ' ft)' : '—') +
-      row('Ground speed', fmtSpd(f) + (f.speedMs != null ? ' (' + fmtInt(Math.round(f.speedMs * 3.6)) + ' km/h, ' + f.speedMs.toFixed(1) + ' m/s)' : '')) +
-      row('True track', fmtHdg(f)) +
-      row('Vertical rate', fmtVr(f) + (f.verticalRateMps != null ? ' (' + f.verticalRateMps.toFixed(1) + ' m/s)' : '')) +
-      row('Status', f.onGround ? 'On ground' : 'Airborne') +
-      row('Registered', esc(f.country || '—')) +
-      row('Squawk', esc(f.squawk || '—')) +
-      row('Position source', posSourceName(f.positionSource)) +
-      row('Aircraft category', categoryName(f.category)) +
-      row('Last contact', relTime(f.lastContact) + (f.timePosition ? ' (fix ' + relTime(f.timePosition) + ')' : '')) +
-      row('ICAO24', esc(f.icao24)) +
-      '</table></div>';
+    return '<div class="tip">' +
+      '<div class="tip-head"><span class="cs" style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</span>' +
+      '<span class="ek">' + esc(ekOf(f)) + '</span>' +
+      '<span class="tip-carrier">' + esc(f.carrier ? f.carrier.name : '') + '</span></div>' +
+      '<div class="tip-route">' + airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival) + '</div>' +
+      '<div class="tip-grid">' +
+      '<span>Altitude <b>' + fmtAlt(f) + '</b></span>' +
+      '<span>Speed <b>' + fmtSpd(f) + '</b></span>' +
+      '<span>Heading <b>' + fmtHdg(f) + '</b></span>' +
+      '<span>V/S <b>' + fmtVr(f) + '</b></span>' +
+      '</div>' +
+      '<div class="tip-sub">' + (f.onGround ? 'On ground' : 'Airborne') +
+      (f.lat != null ? ' · ' + f.lat.toFixed(3) + ', ' + f.lon.toFixed(3) : '') +
+      ' · updated ' + relTime(f.lastContact) + ' · click for all details</div>' +
+      '</div>';
   }
 
   function airportLabel(ap, code) {
@@ -952,7 +950,7 @@
     L.control.layers({ 'Standard': std, 'Dark': dark, 'Vector only (offline)': vectorOnly }, {}, { position: 'topright' }).addTo(state.map);
     state.cluster = L.markerClusterGroup({
       maxClusterRadius: 55,
-      disableClusteringAtZoom: 9,
+      disableClusteringAtZoom: 7,
       spiderfyOnMaxZoom: true,
       showCoverageOnHover: false
     });

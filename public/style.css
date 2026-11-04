@@ -286,12 +286,15 @@ body {
 #chat-send { background: var(--red); color: #fff; border: none; border-radius: 8px; padding: 0 12px; cursor: pointer; }
 
 .plane-tip { background: var(--panel) !important; color: var(--text) !important; border: 1px solid var(--border) !important; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.55); white-space: normal !important; max-width: 360px; }
-.tip { font-size: 12px; line-height: 1.5; min-width: 150px; }
-.tip-head .cs { font-weight: 800; font-size: 13px; }
-.tip-head .ek { color: var(--gold); font-weight: 700; margin-left: 5px; }
+.tip { font-size: 12px; line-height: 1.5; min-width: 190px; }
+.tip-head .cs { font-weight: 800; font-size: 14px; }
+.tip-head .ek { color: var(--gold); font-weight: 700; margin-left: 5px; font-size: 12px; }
 .tip-carrier { color: var(--muted); margin-left: 7px; font-size: 11px; }
-.tip-route { color: var(--text); }
-.tip-sub { color: var(--muted); font-size: 11px; }
+.tip-route { color: var(--text); font-size: 12px; margin: 2px 0 6px; }
+.tip-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin-bottom: 5px; }
+.tip-grid span { color: var(--muted); font-size: 11px; }
+.tip-grid b { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.tip-sub { color: var(--muted); font-size: 10.5px; border-top: 1px solid var(--border); padding-top: 4px; }
 #map { flex: 1; min-height: 0; height: auto; }
 
 .seg {

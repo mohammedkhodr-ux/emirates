@@ -11,8 +11,12 @@ right) answers questions about any flight using live data.
 Hover any plane for **all aviation details** (callsign + flight number, route,
 position, baro/geo altitude, ground speed in kn/km/h, true track, vertical
 rate, squawk, position source, aircraft category, country, last contact).
-Hovering a cluster lists every flight inside it; the tooltip stays open while
-the plane glides (the icon is only re-rendered when its heading changes).
+Hovering a plane shows a compact per-plane card (callsign + flight number,
+origin → destination, altitude, speed, heading, vertical rate, status,
+position); click the plane for the full aviation-detail popup. Hovering a
+cluster lists every flight inside it; the tooltip stays open while the plane
+glides (the icon is only re-rendered when its heading changes). Planes
+uncluster from zoom 7 so plane-level hover works earlier.
 The sidebar has three tabs: **Flights** (live list + search), **Analytics**
 (per-airline counts, altitude/speed bands, top routes, highest/fastest), and
 **Reports** (auto-generated Markdown report with a full flight table — copy or
