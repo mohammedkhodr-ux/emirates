@@ -14,9 +14,13 @@ rate, squawk, position source, aircraft category, country, last contact).
 The sidebar has three tabs: **Flights** (live list + search), **Analytics**
 (per-airline counts, altitude/speed bands, top routes, highest/fastest), and
 **Reports** (auto-generated Markdown report with a full flight table — copy or
-download it). The 💬 chat assistant answers questions about any flight; on the
-deployed app it spends the signed-in user's gateway token (`x-apps-token`), or
-a `MISTRAL_API_KEY` env var if set on the app in Studio.
+download it). The 💬 chat assistant answers questions about any flight. Credential chain
+(`POST /api/chat`, tried in order): the signed-in caller's gateway token
+(`x-apps-token`) spent via the platform-injected apps proxy
+(`__APPS_PROXY_URL`), the same token against the public API, the app's
+service-account token (`MISTRAL_SA_TOKEN_PATH`), then a `MISTRAL_API_KEY` env
+var. `GET /api/chat` reports which sources are available (never the values);
+the chat panel shows this as its status line.
 Red plane markers show real-time positions; you can zoom in/out (scroll wheel,
 `+`/`-` buttons, double-click, pinch) or jump straight to any **continent**
 (preset dropdown) or **country** (search box, or click the country on the map).
