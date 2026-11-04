@@ -100,6 +100,48 @@
       'emergency vehicle', 'service vehicle', 'point obstacle', 'cluster obstacle', 'line obstacle'][c] || '—';
   }
 
+  // Hover tooltip on any flight (airborne or on ground): the full data set,
+  // shown next to the plane on the map.
+  function tooltipHtml(f) {
+    function cell(k, v) { return '<span class="tk">' + k + '</span><span class="tv">' + v + '</span>'; }
+    return '<div class="tip">' +
+      '<div class="tip-head"><span class="cs" style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</span>' +
+      '<span class="ek">' + esc(ekOf(f)) + '</span>' +
+      '<span class="tip-carrier">' + esc(f.carrier ? f.carrier.name : '') + '</span></div>' +
+      '<div class="tip-route">' + airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival) + '</div>' +
+      '<div class="tip-full">' +
+      cell('Altitude', fmtAlt(f) + (f.altitudeM != null ? ' (' + fmtInt(Math.round(f.altitudeM)) + ' m)' : '')) +
+      cell('Geo altitude', f.geoAltitudeM != null ? fmtInt(Math.round(f.geoAltitudeM)) + ' m' : '—') +
+      cell('Speed', fmtSpd(f) + (f.speedMs != null ? ' (' + fmtInt(Math.round(f.speedMs * 3.6)) + ' km/h)' : '')) +
+      cell('Heading', fmtHdg(f)) +
+      cell('Vertical rate', fmtVr(f) + (f.verticalRateMps != null ? ' (' + f.verticalRateMps.toFixed(1) + ' m/s)' : '')) +
+      cell('Status', f.onGround ? 'On ground' : 'Airborne') +
+      cell('Position', f.lat != null ? f.lat.toFixed(4) + ', ' + f.lon.toFixed(4) : '—') +
+      cell('Country', esc(f.country || '—')) +
+      cell('Squawk', esc(f.squawk || '—')) +
+      cell('Pos source', posSourceName(f.positionSource)) +
+      cell('Category', categoryName(f.category)) +
+      cell('Last contact', relTime(f.lastContact) + (f.timePosition ? ' (fix ' + relTime(f.timePosition) + ')' : '')) +
+      cell('ICAO24', esc(f.icao24)) +
+      '</div></div>';
+  }
+
+  // Hovering a cluster of planes lists every flight inside it.
+  function clusterTooltipHtml(childMarkers) {
+    var rows = '', n = 0;
+    childMarkers.forEach(function (cm) {
+      var f = cm.flightData;
+      if (!f || n >= 8) return;
+      n++;
+      rows += '<tr><td><b style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</b>/' + esc(ekOf(f)) + '</td>' +
+        '<td>' + fmtAlt(f) + ' · ' + fmtSpd(f) + ' · ' + routeText(f) + '</td></tr>';
+    });
+    var extra = childMarkers.length > n
+      ? '<tr><td colspan="2">… and ' + (childMarkers.length - n) + ' more — click cluster to zoom</td></tr>' : '';
+    return '<div class="tip"><b>' + childMarkers.length + ' flight' + (childMarkers.length === 1 ? '' : 's') + ' in this cluster</b>' +
+      '<table class="tip-table">' + rows + extra + '</table></div>';
+  }
+
   function airportLabel(ap, code) {
     if (ap && ap.lat != null) return esc(ap.name) + ' (' + esc(code) + ')';
     return esc(code || '—');
@@ -139,26 +181,6 @@
       '<table class="popup-table">' + detailRows(f) + '</table>' +
       '<button class="route-btn" data-icao="' + esc(f.icao24) + '">Show route on map</button>' +
       '</div>';
-  }
-
-  // Sidebar details panel — shown when a plane is clicked, updated live.
-  function detailsHtml(f) {
-    return '<div class="fd-head"><span class="cs" style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</span>' +
-      '<span class="ek">' + esc(ekOf(f)) + '</span><span class="tag">' + esc(f.carrier ? f.carrier.name : 'Airline') + '</span>' +
-      '<button class="fd-close" title="Close">✕</button></div>' +
-      '<div class="popup-route">' + airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival) + '</div>' +
-      '<table class="popup-table">' + detailRows(f) + '</table>' +
-      '<button class="route-btn" data-icao="' + esc(f.icao24) + '">Show route on map</button>';
-  }
-
-  function renderDetails() {
-    var el = $('flight-details');
-    if (!el) return;
-    var f = null;
-    (state.visibleFlights || []).forEach(function (x) { if (x.icao24 === state.selected) f = x; });
-    if (!f) { el.classList.add('hidden'); el.innerHTML = ''; return; }
-    el.classList.remove('hidden');
-    el.innerHTML = detailsHtml(f);
   }
 
   function toRad(d) { return d * Math.PI / 180; }
@@ -307,6 +329,7 @@
       var interactive = true;
       function bind(l) {
         l.on('click', function () { select(f.icao24, false); });
+        l.bindTooltip(function () { return tooltipHtml(f); }, { direction: 'top', sticky: true, className: 'plane-tip' });
       }
       if (seg.flown && seg.flown.length >= 2) {
         bind(L.polyline(seg.flown, { color: color, weight: selected ? 3 : 2, opacity: 0.95, interactive: interactive }).addTo(g));
@@ -324,6 +347,7 @@
         }).addTo(g);
         cm.on('click', function () { select(f.icao24, false); });
         cm.bindPopup(function () { return popupHtml(f); }, { maxWidth: 290 });
+        cm.bindTooltip(function () { return tooltipHtml(f); }, { direction: 'top', className: 'plane-tip' });
       }
     });
     g.addTo(state.map);
@@ -482,7 +506,6 @@
     for (var i = 0; i < flights.length; i++) if (flights[i].icao24 === icao) { f = flights[i]; break; }
     if (!f) return;
     state.selected = icao;
-    renderDetails();
     var rows = document.querySelectorAll('.fl-item');
     for (var j = 0; j < rows.length; j++) rows[j].classList.toggle('active', rows[j].dataset.icao === icao);
     var m = state.markers.get(icao);
@@ -545,6 +568,7 @@
           m = L.marker([f.lat, f.lon], { icon: planeIcon(f) });
           m.on('click', function () { select(f.icao24); });
           m.bindPopup(function () { return popupHtml(m.flightData); }, { maxWidth: 290 });
+          m.bindTooltip(function () { return tooltipHtml(m.flightData); }, { sticky: true, direction: 'top', className: 'plane-tip' });
           m._lastRot = f.track != null ? Math.round(f.track) : 0;
           m._lastGround = !!f.onGround;
           state.cluster.addLayer(m);
@@ -560,6 +584,7 @@
         }
         m.flightData = f;
         if (m.isPopupOpen()) m.setPopupContent(popupHtml(f));
+        if (m.isTooltipOpen()) m.setTooltipContent(tooltipHtml(f));
       } else if (m) {
         state.cluster.removeLayer(m);
         state.markers.delete(f.icao24);
@@ -574,7 +599,6 @@
     renderLegend();
     renderAnalytics();
     renderReport();
-    renderDetails();
     if (!state.fitted && state.visibleFlights.some(function (f) { return f.lat != null; })) {
       fitAll();
       state.fitted = true;
@@ -945,6 +969,12 @@
       spiderfyOnMaxZoom: true,
       showCoverageOnHover: false
     });
+    state.cluster.on('clustermouseover', function (e) {
+      var layer = e.layer;
+      if (!layer.getTooltip()) layer.bindTooltip('', { sticky: true, direction: 'top', className: 'plane-tip' });
+      layer.setTooltipContent(clusterTooltipHtml(layer.getAllChildMarkers()));
+      layer.openTooltip();
+    });
     state.map.addLayer(state.cluster);
 
     var FitControl = L.Control.extend({
@@ -969,16 +999,6 @@
     });
 
     $('search').addEventListener('input', renderList);
-    var fd = $('flight-details');
-    if (fd) fd.addEventListener('click', function (e) {
-      var t = e.target;
-      if (t.classList && t.classList.contains('fd-close')) { fd.classList.add('hidden'); return; }
-      var btn = t.closest ? t.closest('.route-btn') : null;
-      if (btn) {
-        var m = state.markers.get(btn.dataset.icao);
-        if (m && m.flightData) { drawRoute(m.flightData); drawSelTrail(btn.dataset.icao); }
-      }
-    });
     $('status-filter').addEventListener('change', function (e) {
       state.statusFilter = e.target.value;
       if (state.payload) apply(state.payload);

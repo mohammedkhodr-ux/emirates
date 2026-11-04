@@ -11,13 +11,15 @@ right) answers questions about any flight using live data.
 Hover any plane for **all aviation details** (callsign + flight number, route,
 position, baro/geo altitude, ground speed in kn/km/h, true track, vertical
 rate, squawk, position source, aircraft category, country, last contact).
-**Click any plane** on the map (or a list row) to open its full data: a details
-panel in the sidebar (callsign + flight number, route, baro/geo altitude,
+**Hover any plane** on the map to see its full data right next to it (a map
+tooltip, not a side pane): callsign + flight number, route, baro/geo altitude,
 speed, heading, vertical rate, status, position, country, squawk, position
-source, category, last contact, ICAO24) plus a map popup — both update live
-every refresh. Clicking a route line/dot in Lines view also selects the flight.
-Planes uncluster from zoom 7. Sidebar rows keep a one-line hover summary, so
-even flights without a live position show their data on hover.
+source, category, last contact, ICAO24 — airborne and on-ground flights alike.
+The tooltip stays open while the plane glides (the icon is only re-rendered
+when its heading changes) and live-updates each refresh. Hovering a cluster
+lists the flights inside; clicking a plane (or a route line/dot in Lines view,
+or a sidebar row) still opens the map popup and flies to it. Planes uncluster
+from zoom 7; sidebar rows keep a one-line hover summary.
 Use the **status filter** (All / In the air / On the ground) to show only
 airborne or only ground flights on the map, list, analytics and report.
 The sidebar has three tabs: **Flights** (live list + search), **Analytics**
