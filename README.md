@@ -1,0 +1,104 @@
+# Emirates Live Tracker
+
+A live map of **every Emirates aircraft currently in the sky**. Red plane markers
+show real-time positions; you can zoom in/out (scroll wheel, `+`/`-` buttons,
+double-click, pinch), cluster icons when zoomed out, click any plane or list
+entry to zoom to it, see altitude/speed/heading, and draw its great-circle
+route (Dubai ↔ destination).
+
+![stack](https://img.shields.io/badge/stack-Node.js%20%2B%20Leaflet-red)
+
+## Quick start
+
+Requires Node.js ≥ 18. No `npm install` needed — zero dependencies (Leaflet is
+vendored in `public/vendor/`).
+
+```bash
+node server.js
+# then open http://localhost:3000
+```
+
+## How it works
+
+- `server.js` polls the [OpenSky Network](https://opensky-network.org) REST API
+  (`/api/states/all`) and keeps only aircraft whose callsign starts with `UAE`
+  — the Emirates ATC callsign prefix (e.g. `UAE201`).
+- It also queries `/api/flights/all` (last 2 h) to attach the estimated
+  departure/arrival airport of each flight, resolved via the built-in airport
+  table in `lib/airports.js`.
+- The browser (`public/app.js`) renders markers on a Leaflet map and refreshes
+  every 45 s. Results are cached server-side (`.cache/flights.json`) so OpenSky
+  rate limits are respected: if the API answers `429`, the app keeps showing
+  the last good snapshot with a **CACHED** badge and honors the
+  `X-Rate-Limit-Retry-After-Seconds` header.
+
+## Configuration (environment variables)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3000` | HTTP port |
+| `HOST` | `127.0.0.1` | Bind address (loopback only by default) |
+| `DEMO` | `0` | `DEMO=1` serves simulated Emirates traffic (no internet needed) |
+| `REFRESH_MIN_SECONDS` | `45` | Minimum seconds between upstream OpenSky calls |
+| `OPENSKY_CLIENT_ID` | — | Optional OpenSky API client id (see below) |
+| `OPENSKY_CLIENT_SECRET` | — | Optional OpenSky API client secret |
+
+### OpenSky rate limits (2026)
+
+Anonymous access: **400 credits/day** for `/states/*`; a global `/states/all`
+sweep costs **4 credits** → ~100 sweeps/day. With a free OpenSky account you get
+**4,000 credits/day** → comfortable 45 s polling. Since March 2026 OpenSky uses
+**OAuth2 client credentials** (basic auth was retired):
+
+1. Log in at opensky-network.org → Account → create an **API client**.
+2. Export the credentials:
+   ```bash
+   export OPENSKY_CLIENT_ID=...
+   export OPENSKY_CLIENT_SECRET=...
+   node server.js
+   ```
+
+Without credentials the app works anonymously, but the upstream feed may fall
+back to cached data once the daily credits run out.
+
+## Demo mode
+
+```bash
+DEMO=1 node server.js
+```
+
+Generates ~50 simulated Emirates flights (UAE###) flying great-circle routes
+out of Dubai (DXB) to major destinations, with realistic altitude/speed
+profiles — useful for offline development or when the API is rate-limited.
+The UI shows a **DEMO DATA** badge in that case.
+
+## Project structure
+
+```
+server.js               zero-dependency HTTP server (static + /api/flights)
+lib/opensky.js          OpenSky REST client (OAuth2 client-credentials or anonymous)
+lib/airports.js         ICAO -> name/lat/lon table (Dubai hub + destinations)
+lib/demo.js             simulated fleet generator (great-circle routes from DXB)
+public/index.html       app shell
+public/app.js           map, markers, clustering, sidebar, polling
+public/style.css        dark theme
+public/vendor/          vendored Leaflet 1.9.4 + MarkerCluster 1.5.3
+```
+
+## API
+
+- `GET /api/flights` → `{ source: live|cached|demo, count, airborne, flights: [...] }`
+  where each flight has `callsign, lat, lon, altitudeFt, speedKn, track,
+  verticalRateFpm, onGround, lastContact, departure/arrival (+ airport info), …`
+- `GET /api/health` → server status
+
+## Data attribution
+
+- Aircraft data: [The OpenSky Network](https://opensky-network.org) (CC BY-SA 4.0
+  for the data; non-commercial use — commercial use requires a license).
+- Map tiles: © [OpenStreetMap](https://www.openstreetmap.org/copyright)
+  contributors, © [CARTO](https://carto.com/) (dark basemap).
+- Map library: [Leaflet](https://leafletjs.com) (BSD-2-Clause),
+  [leaflet.markercluster](https://github.com/Leaflet/leaflet.markercluster).
+
+Unofficial fan project — not affiliated with or endorsed by Emirates.

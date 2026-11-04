@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emirates Live Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23d71920' d='M21,16v-2l-8-5V3.5C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1v-1.5L13,19v-5.5L21,16z'/></svg>">
+<link rel="stylesheet" href="/vendor/leaflet.css">
+<link rel="stylesheet" href="/vendor/MarkerCluster.css">
+<link rel="stylesheet" href="/vendor/MarkerCluster.Default.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="sidebar">
+  <div class="brand">
+    <span class="brand-icon">✈</span>
+    <div>
+      <h1>Emirates Live Tracker</h1>
+      <p>Every Emirates aircraft in the sky, right now</p>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><span class="stat-num" id="stat-count">–</span><span class="stat-label">airborne</span></div>
+    <div class="stat"><span class="stat-num" id="stat-total">–</span><span class="stat-label">total</span></div>
+    <div class="stat grow"><span class="badge b-live" id="badge">LIVE</span><span class="badge-note" id="badge-note"></span></div>
+  </div>
+  <div class="meta-row">
+    <span id="stat-updated">—</span>
+    <span class="meta-right"><span id="stat-next"></span><button id="refresh-btn" title="Refresh now">⟳ Refresh</button></span>
+  </div>
+  <input id="search" type="search" placeholder="Search flight, route, city… (e.g. UAE201, LHR)" autocomplete="off">
+  <div class="list-head"><span>Flight</span><span><span id="stat-shown">0</span> shown</span></div>
+  <div id="flight-list"></div>
+  <div class="foot">
+    Data: <a href="https://opensky-network.org">OpenSky Network</a> · Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors / <a href="https://carto.com/">CARTO</a><br>
+    Unofficial project — not affiliated with Emirates
+  </div>
+</div>
+<div id="map"></div>
+<script src="/vendor/leaflet.js"></script>
+<script src="/vendor/leaflet.markercluster.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
