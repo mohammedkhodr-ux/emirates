@@ -698,14 +698,30 @@
     }
   }
 
+  async function refreshChatStatus() {
+    var el = $('chat-status');
+    if (!el) return;
+    try {
+      var r = await fetch('/api/chat', { cache: 'no-store' });
+      var j = await r.json();
+      el.textContent = j.ok
+        ? 'model access: ' + (j.sources || []).join(' + ')
+        : 'no model credentials — open via the app gateway or set MISTRAL_API_KEY';
+      el.classList.toggle('warn', !j.ok);
+    } catch (e) {
+      el.textContent = 'status unavailable';
+    }
+  }
+
   function initChat() {
     var toggle = $('chat-toggle'), panel = $('chat-panel');
     if (!toggle || !panel) return;
     toggle.addEventListener('click', function () {
       panel.classList.toggle('hidden');
       var inp = $('chat-input');
-      if (inp && !panel.classList.contains('hidden')) inp.focus();
+      if (inp && !panel.classList.contains('hidden')) { inp.focus(); refreshChatStatus(); }
     });
+    refreshChatStatus();
     $('chat-close').addEventListener('click', function () { panel.classList.add('hidden'); });
     $('chat-send').addEventListener('click', function () { chatSend($('chat-input').value); $('chat-input').value = ''; });
     $('chat-input').addEventListener('keydown', function (e) {

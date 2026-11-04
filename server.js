@@ -234,9 +234,44 @@ function flightsContext(flights, nowSec) {
   }).join('\n');
 }
 
+const API_BASE = (process.env.MISTRAL_BASE_URL || 'https://api.mistral.ai').replace(/\/$/, '');
+
+// Credential candidates for the chat agent, in priority order. Never log or
+// return token values — only the `via` label and host names.
+function chatCredentialCandidates(req) {
+  const out = [];
+  const callerToken = req.headers['x-apps-token'] || req.headers['x-space-token'] || null;
+  // The platform injects __APPS_PROXY_URL / __SPACES_PROXY_URL into the app when
+  // a gateway fronts it; the caller token is spent against that proxy URL.
+  const proxyUrl = process.env.__APPS_PROXY_URL || process.env.__SPACES_PROXY_URL || process.env.APPS_PROXY_URL || null;
+  if (callerToken && proxyUrl) out.push({ token: callerToken, base: proxyUrl.replace(/\/$/, '') + '/v1', via: 'gateway-caller-proxy' });
+  if (callerToken) out.push({ token: callerToken, base: API_BASE + '/v1', via: 'gateway-caller-direct' });
+  const saPath = process.env.MISTRAL_SA_TOKEN_PATH || null;
+  if (saPath) {
+    try {
+      const t = fs.readFileSync(saPath, 'utf8').trim();
+      if (t) out.push({ token: t, base: API_BASE + '/v1', via: 'service-account' });
+    } catch { /* token file not mounted here */ }
+  }
+  if (process.env.MISTRAL_API_KEY) out.push({ token: process.env.MISTRAL_API_KEY, base: API_BASE + '/v1', via: 'env-key' });
+  return out;
+}
+
+function chatDebug(req) {
+  const proxyUrl = process.env.__APPS_PROXY_URL || process.env.__SPACES_PROXY_URL || process.env.APPS_PROXY_URL || null;
+  return {
+    hasGatewayToken: !!(req.headers['x-apps-token'] || req.headers['x-space-token']),
+    proxyHost: proxyUrl ? new URL(proxyUrl).host : null,
+    hasServiceAccountToken: !!process.env.MISTRAL_SA_TOKEN_PATH,
+    hasEnvKey: !!process.env.MISTRAL_API_KEY,
+    apiBaseHost: new URL(API_BASE).host
+  };
+}
+
 // Chat agent: answers questions about the currently tracked flights.
-// Uses the caller's gateway token (Authorization header forwarded by the app
-// gateway) or MISTRAL_API_KEY, so usage is billed to the calling user.
+// Uses the caller's gateway token (x-apps-token, spent via the apps proxy) so
+// usage is billed to the calling user; falls back to the app's service-account
+// token or a MISTRAL_API_KEY env var.
 async function handleChat(req, res) {
   try {
     const data = JSON.parse(await readBody(req, 65536) || '{}');
@@ -255,37 +290,38 @@ async function handleChat(req, res) {
         'Snapshot (UTC ' + new Date(nowSec * 1000).toISOString() + '):\n' +
         (flightsContext(flights, nowSec) || '(no flights in snapshot)')
     };
-    // The Mistral Apps gateway forwards the signed-in caller's token under
-    // x-apps-token / x-space-token, so chat is billed to the caller with no
-    // stored key. Fall back to a direct Authorization header, then to a
-    // MISTRAL_API_KEY env var set on the app in Studio.
-    const callerToken = req.headers['x-apps-token'] || req.headers['x-space-token'];
-    const auth = callerToken
-      ? 'Bearer ' + callerToken
-      : (req.headers.authorization || (process.env.MISTRAL_API_KEY ? 'Bearer ' + process.env.MISTRAL_API_KEY : null));
-    if (!auth) {
-      sendJson(res, 503, { error: 'no model credentials: call via the app gateway (x-apps-token) or set MISTRAL_API_KEY on the app' });
+    const model = process.env.CHAT_MODEL || 'mistral-small-latest';
+    const candidates = chatCredentialCandidates(req);
+    if (!candidates.length) {
+      sendJson(res, 503, { error: 'no model credentials available (open the app via its gateway URL, or set MISTRAL_API_KEY on the app)', debug: chatDebug(req) });
       return;
     }
-    const r = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: auth },
-      body: JSON.stringify({
-        model: process.env.CHAT_MODEL || 'mistral-small-latest',
-        messages: [sys, ...messages],
-        temperature: 0.3,
-        max_tokens: 500
-      }),
-      signal: AbortSignal.timeout(30000)
-    });
-    if (!r.ok) {
+    let lastErr = 'unknown', lastStatus = 0;
+    for (const c of candidates) {
+      let r;
+      try {
+        r = await fetch(c.base + '/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.token },
+          body: JSON.stringify({ model, messages: [sys, ...messages], temperature: 0.3, max_tokens: 500 }),
+          signal: AbortSignal.timeout(30000)
+        });
+      } catch (e) {
+        lastErr = String((e && e.message) || e);
+        continue;
+      }
+      if (r.ok) {
+        const j = await r.json();
+        const reply = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+        sendJson(res, 200, { reply, via: c.via });
+        return;
+      }
       const t = await r.text().catch(() => '');
-      sendJson(res, 502, { error: 'model API HTTP ' + r.status + ': ' + t.slice(0, 300) });
-      return;
+      lastStatus = r.status;
+      lastErr = 'HTTP ' + r.status + ': ' + t.slice(0, 300);
+      if (r.status !== 401 && r.status !== 403) break; // real API error, not an auth one
     }
-    const j = await r.json();
-    const reply = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-    sendJson(res, 200, { reply });
+    sendJson(res, 502, { error: 'model API failed: ' + lastErr, debug: { ...chatDebug(req), lastStatus } });
   } catch (e) {
     sendJson(res, 500, { error: String((e && e.message) || e) });
   }
@@ -432,6 +468,11 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/api/carriers') {
     sendJson(res, 200, { carriers: CARRIERS });
+    return;
+  }
+  if (p === '/api/chat' && req.method === 'GET') {
+    const c = chatCredentialCandidates(req);
+    sendJson(res, 200, { ok: c.length > 0, sources: c.map(x => x.via), debug: chatDebug(req) });
     return;
   }
   if (p === '/api/chat' && req.method === 'POST') {
