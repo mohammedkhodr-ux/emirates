@@ -92,6 +92,22 @@ public/vendor/          vendored Leaflet 1.9.4 + MarkerCluster 1.5.3
   verticalRateFpm, onGround, lastContact, departure/arrival (+ airport info), …`
 - `GET /api/health` → server status
 
+## Deploy to Mistral Apps (Vibe catalog)
+
+The repo carries an `apps.json` manifest and `deploy/docker/Dockerfile`, so it
+deploys to the Mistral Apps platform with the `mistral` CLI:
+
+```bash
+mistral apps deploy --yes     # builds from this repo and deploys the "production" alias
+mistral apps publish          # adds the deployed app to the Vibe apps catalog
+```
+
+The platform builds the Docker image (Node 22, binds `0.0.0.0:$PORT`), runs
+`node server.js`, and the gateway routes `/` to the module. Set
+`OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET` as app environment variables to
+raise the OpenSky rate limit. `HOST` stays `127.0.0.1` for local runs and is
+overridden to `0.0.0.0` inside the container.
+
 ## Data attribution
 
 - Aircraft data: [The OpenSky Network](https://opensky-network.org) (CC BY-SA 4.0
