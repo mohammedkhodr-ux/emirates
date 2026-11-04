@@ -8,6 +8,15 @@ speed, heading, vertical rate, position, status). Each flight's path is drawn
 split at the current position: **solid line = already travelled**, **dotted
 line = remaining trajectory to destination**. A 💬 **chat assistant** (bottom
 right) answers questions about any flight using live data.
+Hover any plane for **all aviation details** (callsign + flight number, route,
+position, baro/geo altitude, ground speed in kn/km/h, true track, vertical
+rate, squawk, position source, aircraft category, country, last contact).
+The sidebar has three tabs: **Flights** (live list + search), **Analytics**
+(per-airline counts, altitude/speed bands, top routes, highest/fastest), and
+**Reports** (auto-generated Markdown report with a full flight table — copy or
+download it). The 💬 chat assistant answers questions about any flight; on the
+deployed app it spends the signed-in user's gateway token (`x-apps-token`), or
+a `MISTRAL_API_KEY` env var if set on the app in Studio.
 Red plane markers show real-time positions; you can zoom in/out (scroll wheel,
 `+`/`-` buttons, double-click, pinch) or jump straight to any **continent**
 (preset dropdown) or **country** (search box, or click the country on the map).

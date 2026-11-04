@@ -60,9 +60,24 @@
     <span id="stat-updated">—</span>
     <span class="meta-right"><label class="chk" title="Draw a trail behind each plane"><input type="checkbox" id="trails" checked> trails</label><label class="chk" title="Keep the map centered on the selected plane"><input type="checkbox" id="follow"> follow</label><span id="stat-next"></span><button id="refresh-btn" title="Refresh now">⟳ Refresh</button></span>
   </div>
-  <input id="search" type="search" placeholder="Search flight, route, city… (e.g. UAE201 / EK201, LHR)" autocomplete="off">
-  <div class="list-head"><span>Flight</span><span><span id="stat-shown">0</span> shown</span></div>
-  <div id="flight-list"></div>
+  <div class="tabs">
+    <button id="tab-flights" class="active">Flights</button>
+    <button id="tab-analytics">Analytics</button>
+    <button id="tab-reports">Reports</button>
+  </div>
+  <div id="pane-flights">
+    <input id="search" type="search" placeholder="Search flight, route, city… (e.g. UAE201 / EK201, LHR)" autocomplete="off">
+    <div class="list-head"><span>Flight</span><span><span id="stat-shown">0</span> shown</span></div>
+    <div id="flight-list"></div>
+  </div>
+  <div id="pane-analytics" class="hidden"></div>
+  <div id="pane-reports" class="hidden">
+    <div class="report-actions">
+      <button id="report-download">⬇ Download .md</button>
+      <button id="report-copy">⧉ Copy</button>
+    </div>
+    <pre id="report-text"></pre>
+  </div>
   <div class="foot">
     Data: <a href="https://opensky-network.org">OpenSky Network</a> · Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors / <a href="https://carto.com/">CARTO</a><br>
     Unofficial project — not affiliated with Emirates

@@ -255,9 +255,16 @@ async function handleChat(req, res) {
         'Snapshot (UTC ' + new Date(nowSec * 1000).toISOString() + '):\n' +
         (flightsContext(flights, nowSec) || '(no flights in snapshot)')
     };
-    const auth = req.headers.authorization || (process.env.MISTRAL_API_KEY ? 'Bearer ' + process.env.MISTRAL_API_KEY : null);
+    // The Mistral Apps gateway forwards the signed-in caller's token under
+    // x-apps-token / x-space-token, so chat is billed to the caller with no
+    // stored key. Fall back to a direct Authorization header, then to a
+    // MISTRAL_API_KEY env var set on the app in Studio.
+    const callerToken = req.headers['x-apps-token'] || req.headers['x-space-token'];
+    const auth = callerToken
+      ? 'Bearer ' + callerToken
+      : (req.headers.authorization || (process.env.MISTRAL_API_KEY ? 'Bearer ' + process.env.MISTRAL_API_KEY : null));
     if (!auth) {
-      sendJson(res, 503, { error: 'no model credentials: call via the app gateway (user token) or set MISTRAL_API_KEY' });
+      sendJson(res, 503, { error: 'no model credentials: call via the app gateway (x-apps-token) or set MISTRAL_API_KEY on the app' });
       return;
     }
     const r = await fetch('https://api.mistral.ai/v1/chat/completions', {

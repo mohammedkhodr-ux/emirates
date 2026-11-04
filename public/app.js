@@ -90,17 +90,35 @@
     });
   }
 
-  // Hover tooltip with all relevant data of a flight.
+  function posSourceName(n) {
+    return ['ADS-B', 'ASTERIX', 'MLAT', 'FLARM'][n] != null ? ['ADS-B', 'ASTERIX', 'MLAT', 'FLARM'][n] : '—';
+  }
+  function categoryName(c) {
+    return ['no info', 'no category', 'light', 'small', 'large', 'high-vortex large', 'heavy', 'high-performance',
+      'rotorcraft', 'glider', 'lighter-than-air', 'parachutist', 'ultralight', 'reserved', 'UAV', 'space',
+      'emergency vehicle', 'service vehicle', 'point obstacle', 'cluster obstacle', 'line obstacle'][c] || '—';
+  }
+
+  // Hover tooltip: every aviation detail available for the flight.
   function tooltipHtml(f) {
-    return '<div class="tip">' +
-      '<div class="tip-head"><span class="cs" style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</span>' +
-      '<span class="ek">' + esc(ekOf(f)) + '</span><span class="tip-carrier">' + esc(f.carrier ? f.carrier.name : '') + '</span></div>' +
-      '<div class="tip-route">' + routeText(f) + '</div>' +
-      '<div>' + fmtAlt(f) + ' · ' + fmtSpd(f) + ' · hdg ' + fmtHdg(f) + ' · ' + fmtVr(f) + '</div>' +
-      '<div class="tip-sub">' + (f.onGround ? 'on ground' : 'airborne') +
-      (f.lat != null ? ' · ' + f.lat.toFixed(3) + ', ' + f.lon.toFixed(3) : ' · no fix') +
-      ' · ' + relTime(f.lastContact) + '</div>' +
-      '</div>';
+    function row(k, v) { return '<tr><td>' + k + '</td><td>' + v + '</td></tr>'; }
+    return '<div class="tip"><table class="tip-table">' +
+      row('Flight', '<b style="color:' + esc(colorOf(f)) + '">' + esc(f.callsign) + '</b> / <span class="ek">' + esc(ekOf(f)) + '</span>' + (f.carrier ? ' · ' + esc(f.carrier.name) : '')) +
+      row('Route', airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival)) +
+      row('Position', f.lat != null ? f.lat.toFixed(4) + ', ' + f.lon.toFixed(4) : '—') +
+      row('Altitude', fmtAlt(f) + (f.altitudeM != null ? ' (' + fmtInt(Math.round(f.altitudeM)) + ' m)' : '')) +
+      row('Geo altitude', f.geoAltitudeM != null ? fmtInt(Math.round(f.geoAltitudeM)) + ' m (' + fmtInt(Math.round(f.geoAltitudeM * 3.28084)) + ' ft)' : '—') +
+      row('Ground speed', fmtSpd(f) + (f.speedMs != null ? ' (' + fmtInt(Math.round(f.speedMs * 3.6)) + ' km/h, ' + f.speedMs.toFixed(1) + ' m/s)' : '')) +
+      row('True track', fmtHdg(f)) +
+      row('Vertical rate', fmtVr(f) + (f.verticalRateMps != null ? ' (' + f.verticalRateMps.toFixed(1) + ' m/s)' : '')) +
+      row('Status', f.onGround ? 'On ground' : 'Airborne') +
+      row('Registered', esc(f.country || '—')) +
+      row('Squawk', esc(f.squawk || '—')) +
+      row('Position source', posSourceName(f.positionSource)) +
+      row('Aircraft category', categoryName(f.category)) +
+      row('Last contact', relTime(f.lastContact) + (f.timePosition ? ' (fix ' + relTime(f.timePosition) + ')' : '')) +
+      row('ICAO24', esc(f.icao24)) +
+      '</table></div>';
   }
 
   function airportLabel(ap, code) {
@@ -122,13 +140,17 @@
       '<div class="popup-route">' + airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival) + '</div>' +
       '<table class="popup-table">' +
       row('Position', f.lat != null ? f.lat.toFixed(4) + ', ' + f.lon.toFixed(4) : '—') +
-      row('Altitude', fmtAlt(f)) +
-      row('Ground speed', fmtSpd(f)) +
-      row('Vertical rate', fmtVr(f)) +
-      row('Heading', fmtHdg(f)) +
+      row('Altitude', fmtAlt(f) + (f.altitudeM != null ? ' (' + fmtInt(Math.round(f.altitudeM)) + ' m)' : '')) +
+      row('Geo altitude', f.geoAltitudeM != null ? fmtInt(Math.round(f.geoAltitudeM)) + ' m' : '—') +
+      row('Ground speed', fmtSpd(f) + (f.speedMs != null ? ' (' + fmtInt(Math.round(f.speedMs * 3.6)) + ' km/h)' : '')) +
+      row('True track', fmtHdg(f)) +
+      row('Vertical rate', fmtVr(f) + (f.verticalRateMps != null ? ' (' + f.verticalRateMps.toFixed(1) + ' m/s)' : '')) +
       row('Status', f.onGround ? 'On ground' : 'Airborne') +
-      row('Last contact', relTime(f.lastContact)) +
-      (f.squawk ? row('Squawk', esc(f.squawk)) : '') +
+      row('Registered in', esc(f.country || '—')) +
+      row('Position source', posSourceName(f.positionSource)) +
+      row('Aircraft category', categoryName(f.category)) +
+      row('Last contact', relTime(f.lastContact) + (f.timePosition ? ' · fix ' + relTime(f.timePosition) : '')) +
+      row('Squawk', esc(f.squawk || '—')) +
       row('ICAO24', esc(f.icao24)) +
       '</table>' +
       '<button class="route-btn" data-icao="' + esc(f.icao24) + '">Show route on map</button>' +
@@ -533,6 +555,8 @@
     drawAllRoutes();
     renderList();
     renderLegend();
+    renderAnalytics();
+    renderReport();
     if (!state.fitted && state.visibleFlights.some(function (f) { return f.lat != null; })) {
       fitAll();
       state.fitted = true;
@@ -693,6 +717,163 @@
     }
   }
 
+  function initTabs() {
+    var tabs = [['tab-flights', 'pane-flights'], ['tab-analytics', 'pane-analytics'], ['tab-reports', 'pane-reports']];
+    tabs.forEach(function (t) {
+      $(t[0]).addEventListener('click', function () {
+        tabs.forEach(function (x) {
+          $(x[0]).classList.toggle('active', x[0] === t[0]);
+          $(x[1]).classList.toggle('hidden', x[1] !== t[1]);
+        });
+      });
+    });
+  }
+
+  function bar(label, count, max, color) {
+    var pct = max ? Math.round(count / max * 100) : 0;
+    return '<div class="bar-row"><span class="bar-label">' + esc(label) + '</span>' +
+      '<span class="bar-track"><span class="bar-fill" style="width:' + pct + '%;background:' + (color || '#d4af37') + '"></span></span>' +
+      '<span class="bar-num">' + count + '</span></div>';
+  }
+
+  function carrierColor(id) {
+    var c = (state.carriers || []).find(function (x) { return x.id === id; });
+    return c ? c.color : '#d4af37';
+  }
+
+  function renderAnalytics() {
+    var el = $('pane-analytics');
+    if (!el) return;
+    var flights = state.visibleFlights || [];
+    var airborne = flights.filter(function (f) { return !f.onGround; });
+    var ground = flights.length - airborne.length;
+    var byCarrier = {}, altBands = [0, 0, 0, 0, 0], spdBands = [0, 0, 0, 0], routes = {};
+    var maxAlt = -1, maxAltF = null, maxSpd = -1, maxSpdF = null, climbing = 0, descending = 0, altSum = 0, altN = 0;
+    flights.forEach(function (f) {
+      var cid = f.carrier ? f.carrier.id : '??';
+      byCarrier[cid] = (byCarrier[cid] || 0) + 1;
+      if (f.onGround) return;
+      if (f.altitudeFt != null) {
+        altSum += f.altitudeFt; altN++;
+        if (f.altitudeFt < 10000) altBands[0]++; else if (f.altitudeFt < 20000) altBands[1]++;
+        else if (f.altitudeFt < 30000) altBands[2]++; else if (f.altitudeFt < 40000) altBands[3]++; else altBands[4]++;
+        if (f.altitudeFt > maxAlt) { maxAlt = f.altitudeFt; maxAltF = f; }
+      }
+      if (f.speedKn != null) {
+        if (f.speedKn < 300) spdBands[0]++; else if (f.speedKn < 450) spdBands[1]++;
+        else if (f.speedKn < 550) spdBands[2]++; else spdBands[3]++;
+        if (f.speedKn > maxSpd) { maxSpd = f.speedKn; maxSpdF = f; }
+      }
+      if (f.verticalRateFpm > 500) climbing++; else if (f.verticalRateFpm < -500) descending++;
+      routes[(f.departure || '?') + '→' + (f.arrival || '?')] = (routes[(f.departure || '?') + '→' + (f.arrival || '?')] || 0) + 1;
+    });
+    var html = '<h3>Overview</h3><div class="cards">' +
+      card('Tracked', flights.length) + card('Airborne', airborne.length) + card('On ground', ground) +
+      card('Climbing', climbing) + card('Descending', descending) +
+      card('Avg cruise alt', altN ? fmtInt(Math.round(altSum / altN)) + ' ft' : '—') +
+      card('Highest', maxAltF ? esc(maxAltF.callsign) + ' ' + fmtInt(maxAlt) + ' ft' : '—') +
+      card('Fastest', maxSpdF ? esc(maxSpdF.callsign) + ' ' + fmtInt(maxSpd) + ' kn' : '—') +
+      '</div>';
+    var cids = Object.keys(byCarrier).sort(function (a, b) { return byCarrier[b] - byCarrier[a]; });
+    var cMax = Math.max(1, ...cids.map(function (c) { return byCarrier[c]; }));
+    html += '<h3>Flights per airline</h3>';
+    cids.forEach(function (c) {
+      var name = (state.carriers.find(function (x) { return x.id === c; }) || {}).name || c;
+      html += bar(name, byCarrier[c], cMax, carrierColor(c));
+    });
+    var aMax = Math.max(1, ...altBands);
+    html += '<h3>Altitude bands (airborne)</h3>' +
+      bar('< 10,000 ft', altBands[0], aMax) + bar('10–20k ft', altBands[1], aMax) +
+      bar('20–30k ft', altBands[2], aMax) + bar('30–40k ft', altBands[3], aMax) + bar('> 40,000 ft', altBands[4], aMax);
+    var sMax = Math.max(1, ...spdBands);
+    html += '<h3>Ground speed bands (airborne)</h3>' +
+      bar('< 300 kn', spdBands[0], sMax) + bar('300–450 kn', spdBands[1], sMax) +
+      bar('450–550 kn', spdBands[2], sMax) + bar('> 550 kn', spdBands[3], sMax);
+    var rts = Object.keys(routes).sort(function (a, b) { return routes[b] - routes[a]; }).slice(0, 8);
+    var rMax = Math.max(1, ...rts.map(function (r) { return routes[r]; }));
+    html += '<h3>Top routes</h3>';
+    rts.forEach(function (r) { html += bar(r, routes[r], rMax, '#38bdf8'); });
+    el.innerHTML = html;
+  }
+
+  function card(label, value) {
+    return '<div class="card"><span class="card-num">' + value + '</span><span class="card-label">' + esc(label) + '</span></div>';
+  }
+
+  function renderReport() {
+    var el = $('report-text');
+    if (!el) return;
+    var p = state.payload || {};
+    var flights = state.visibleFlights || [];
+    var airborne = flights.filter(function (f) { return !f.onGround; });
+    var byCarrier = {};
+    flights.forEach(function (f) { var c = f.carrier ? f.carrier.name : 'Unknown'; byCarrier[c] = (byCarrier[c] || 0) + 1; });
+    var routes = {};
+    flights.forEach(function (f) { var r = (f.departure || '?') + '→' + (f.arrival || '?'); routes[r] = (routes[r] || 0) + 1; });
+    var maxAltF = null, maxSpdF = null;
+    airborne.forEach(function (f) {
+      if (f.altitudeFt != null && (!maxAltF || f.altitudeFt > maxAltF.altitudeFt)) maxAltF = f;
+      if (f.speedKn != null && (!maxSpdF || f.speedKn > maxSpdF.speedKn)) maxSpdF = f;
+    });
+    var L = [];
+    L.push('# Middle East Airlines — flight report');
+    L.push('');
+    L.push('- Generated (UTC): ' + new Date().toISOString());
+    L.push('- Snapshot: ' + (p.source || 'unknown') + (p.historical ? ' · historical as of ' + new Date((p.serverTime || 0) * 1000).toISOString() : '') + (p.dataAgeSec != null ? ' · cached ' + p.dataAgeSec + 's old' : ''));
+    L.push('- Tracked flights: ' + flights.length + ' (' + airborne.length + ' airborne, ' + (flights.length - airborne.length) + ' on ground)');
+    if (maxAltF) L.push('- Highest: ' + maxAltF.callsign + ' / ' + ekOf(maxAltF) + ' at ' + fmtInt(maxAltF.altitudeFt) + ' ft');
+    if (maxSpdF) L.push('- Fastest: ' + maxSpdF.callsign + ' / ' + ekOf(maxSpdF) + ' at ' + fmtInt(maxSpdF.speedKn) + ' kn');
+    L.push('');
+    L.push('## Flights per airline');
+    L.push('');
+    L.push('| Airline | Flights |');
+    L.push('|---|---|');
+    Object.keys(byCarrier).sort(function (a, b) { return byCarrier[b] - byCarrier[a]; }).forEach(function (c) {
+      L.push('| ' + c + ' | ' + byCarrier[c] + ' |');
+    });
+    L.push('');
+    L.push('## Top routes');
+    L.push('');
+    L.push('| Route | Flights |');
+    L.push('|---|---|');
+    Object.keys(routes).sort(function (a, b) { return routes[b] - routes[a]; }).slice(0, 10).forEach(function (r) {
+      L.push('| ' + r + ' | ' + routes[r] + ' |');
+    });
+    L.push('');
+    L.push('## All flights');
+    L.push('');
+    L.push('| Callsign | Flight no | Airline | Route | Alt (ft) | Speed (kn) | Hdg | V/S (fpm) | Status | Position |');
+    L.push('|---|---|---|---|---|---|---|---|---|---|');
+    flights.slice().sort(function (a, b) { return a.callsign.localeCompare(b.callsign); }).forEach(function (f) {
+      L.push('| ' + f.callsign + ' | ' + ekOf(f) + ' | ' + (f.carrier ? f.carrier.name : '') + ' | ' +
+        (f.departure || '?') + '→' + (f.arrival || '?') + ' | ' + (f.altitudeFt != null ? f.altitudeFt : '—') + ' | ' +
+        (f.speedKn != null ? f.speedKn : '—') + ' | ' + (f.track != null ? Math.round(f.track) + '°' : '—') + ' | ' +
+        (f.verticalRateFpm != null ? f.verticalRateFpm : '—') + ' | ' + (f.onGround ? 'ground' : 'airborne') + ' | ' +
+        (f.lat != null ? f.lat.toFixed(2) + ',' + f.lon.toFixed(2) : '—') + ' |');
+    });
+    L.push('');
+    L.push('Data: OpenSky Network · unofficial tracker, not affiliated with the airlines.');
+    el.textContent = L.join('\n');
+  }
+
+  function initReports() {
+    $('report-download').addEventListener('click', function () {
+      var blob = new Blob([$('report-text').textContent], { type: 'text/markdown' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'flight-report-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.md';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    });
+    $('report-copy').addEventListener('click', function () {
+      var t = $('report-text').textContent;
+      if (navigator.clipboard) navigator.clipboard.writeText(t);
+      this.textContent = '✓ Copied';
+      var btn = this;
+      setTimeout(function () { btn.textContent = '⧉ Copy'; }, 1500);
+    });
+  }
+
   function init() {
     var now = new Date();
     state.histDate = todayStr();
@@ -838,6 +1019,8 @@
 
     loadCarriers();
     initChat();
+    initTabs();
+    initReports();
     loadCountries();
     loadSchedule(state.histDate);
     tick();
