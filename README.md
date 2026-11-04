@@ -6,6 +6,9 @@ Red plane markers show real-time positions; you can zoom in/out (scroll wheel,
 (preset dropdown) or **country** (search box, or click the country on the map).
 Click any plane or list entry to zoom to it, see altitude/speed/heading, and
 draw its great-circle route (Dubai ↔ destination) plus its flown trail.
+Every flight is shown with both identifiers — the ATC callsign `UAE###` and the
+commercial flight number `EK###` — in the list, popups, line tooltips, marker
+hover and search.
 
 Two display formats: **map** (plane markers with clustering) or **lines**
 (great-circle route lines for every flight), or both at once. The bottom bar

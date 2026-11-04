@@ -93,10 +93,13 @@
     return esc(f.departure || '?') + ' → ' + esc(f.arrival || '?');
   }
 
+  // Emirates ATC callsign is UAE###; the commercial flight number is EK###.
+  function ekOf(f) { return f.callsign ? f.callsign.replace(/^UAE/i, 'EK') : ''; }
+
   function popupHtml(f) {
     function row(k, v) { return '<tr><td>' + k + '</td><td>' + v + '</td></tr>'; }
     return '<div class="popup">' +
-      '<div class="popup-head"><span class="cs">' + esc(f.callsign) + '</span><span class="tag">Emirates</span></div>' +
+      '<div class="popup-head"><span class="cs">' + esc(f.callsign) + '</span><span class="ek">' + esc(ekOf(f)) + '</span><span class="tag">Emirates</span></div>' +
       '<div class="popup-route">' + airportLabel(f.departureAirport, f.departure) + ' → ' + airportLabel(f.arrivalAirport, f.arrival) + '</div>' +
       '<table class="popup-table">' +
       row('Position', f.lat != null ? f.lat.toFixed(4) + ', ' + f.lon.toFixed(4) : '—') +
@@ -233,7 +236,7 @@
       });
       if (state.view === 'lines') {
         line.on('click', function () { select(f.icao24, false); });
-        line.bindTooltip(esc(f.callsign) + ' · ' + routeText(f), { direction: 'top', sticky: true });
+        line.bindTooltip(esc(f.callsign) + ' / ' + esc(ekOf(f)) + ' · ' + routeText(f), { direction: 'top', sticky: true });
       }
       line.addTo(g);
       if (f.lat != null && f.lon != null) {
@@ -454,7 +457,7 @@
       var m = state.markers.get(f.icao24);
       if (hasPos && useCluster) {
         if (!m) {
-          m = L.marker([f.lat, f.lon], { icon: planeIcon(f), title: f.callsign });
+          m = L.marker([f.lat, f.lon], { icon: planeIcon(f), title: f.callsign + ' / ' + ekOf(f) });
           m.on('click', function () { select(f.icao24); });
           m.bindPopup(function () { return popupHtml(m.flightData); }, { maxWidth: 290 });
           state.cluster.addLayer(m);
@@ -490,7 +493,7 @@
       .sort(function (a, b) { return a.callsign.localeCompare(b.callsign); });
     var shown = 0;
     flights.forEach(function (f) {
-      var hay = (f.callsign + ' ' + (f.departure || '') + ' ' + (f.arrival || '') + ' ' +
+      var hay = (f.callsign + ' ' + ekOf(f) + ' ' + (f.departure || '') + ' ' + (f.arrival || '') + ' ' +
         (f.departureAirport ? f.departureAirport.name : '') + ' ' +
         (f.arrivalAirport ? f.arrivalAirport.name : '')).toLowerCase();
       if (q && hay.indexOf(q) === -1) return;
@@ -499,7 +502,7 @@
       div.className = 'fl-item' + (state.selected === f.icao24 ? ' active' : '');
       div.dataset.icao = f.icao24;
       div.innerHTML =
-        '<div class="fl-top"><span class="fl-cs">' + esc(f.callsign) + '</span><span class="fl-alt">' + fmtAlt(f) + '</span></div>' +
+        '<div class="fl-top"><span><span class="fl-cs">' + esc(f.callsign) + '</span><span class="fl-ek">' + esc(ekOf(f)) + '</span></span><span class="fl-alt">' + fmtAlt(f) + '</span></div>' +
         '<div class="fl-route">' + routeText(f) + '</div>' +
         '<div class="fl-meta">' + fmtSpd(f) + (f.onGround ? ' · on ground' : '') + '</div>';
       div.addEventListener('click', function () { select(f.icao24); });
