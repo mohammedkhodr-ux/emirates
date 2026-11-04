@@ -18,6 +18,15 @@ node server.js
 # then open http://localhost:3000
 ```
 
+## Live movement on the map
+
+Markers don't just jump on every poll — a `requestAnimationFrame` loop glides
+each airborne plane along its true track and ground speed between updates, and
+each poll corrects the position to the latest ADS-B fix. The header has two
+toggles: **trails** draws a gold path behind each plane (last ~2 min of
+positions), and **follow** keeps the map centered on the selected plane as it
+flies.
+
 ## How it works
 
 - `server.js` polls the [OpenSky Network](https://opensky-network.org) REST API
