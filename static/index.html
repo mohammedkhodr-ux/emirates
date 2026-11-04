@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emirates Flight Tracker</title>
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand"><span class="logo">✈</span> Emirates Flight Tracker</div>
+  <div class="modes">
+    <button id="mode-live" class="mode active">Live</button>
+    <button id="mode-hist" class="mode">Historical</button>
+  </div>
+  <span id="source-badge" class="badge">connecting…</span>
+  <span id="updated" class="muted"></span>
+  <button id="refresh" title="Refresh now">⟳</button>
+</header>
+
+<nav id="toolbar">
+  <div class="group">
+    <label>Zoom</label>
+    <select id="continent">
+      <option value="world">World</option>
+      <option value="africa">Africa</option>
+      <option value="europe">Europe</option>
+      <option value="asia">Asia</option>
+      <option value="mideast">Middle East</option>
+      <option value="namerica">North America</option>
+      <option value="samerica">South America</option>
+      <option value="oceania">Oceania</option>
+    </select>
+    <input id="country-search" list="countries-list" placeholder="Search country…" autocomplete="off">
+    <datalist id="countries-list"></datalist>
+  </div>
+  <div class="group">
+    <label>View</label>
+    <select id="view-format">
+      <option value="both">Map + lines</option>
+      <option value="markers">Map only</option>
+      <option value="lines">Lines only</option>
+    </select>
+    <select id="basemap">
+      <option value="dark">Dark tiles</option>
+      <option value="osm">OpenStreetMap</option>
+      <option value="vector">Vector (offline)</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="show-airports"> Airports</label>
+  </div>
+</nav>
+
+<main id="main">
+  <div id="map"></div>
+  <aside id="panel" class="hidden">
+    <button id="panel-close">×</button>
+    <h2 id="panel-title">Flight</h2>
+    <div id="panel-body"></div>
+  </aside>
+</main>
+
+<footer id="timeline">
+  <div id="hist-controls" class="hidden">
+    <input type="date" id="hist-date">
+    <button id="play" title="Play">▶</button>
+    <input type="range" id="time-slider" min="0" max="1439" value="720">
+    <span id="hist-time" class="mono">12:00 UTC</span>
+  </div>
+  <canvas id="chart" height="86"></canvas>
+  <div id="chart-label" class="muted">Flights airborne per hour — click to scrub time</div>
+</footer>
+
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
