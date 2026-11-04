@@ -13,7 +13,13 @@
     routeLayer: null,
     fitted: false,
     nextAt: 0,
-    nextTimer: null
+    nextTimer: null,
+    trails: new Map(),
+    trailLayers: new Map(),
+    lastSample: new Map(),
+    showTrails: true,
+    follow: false,
+    lastFrame: 0
   };
 
   function $(id) { return document.getElementById(id); }
@@ -99,6 +105,69 @@
     return pts;
   }
 
+  // Dead-reckoning: move a latlng `distM` meters along `bearingDeg`.
+  function destinationPoint(ll, distM, bearingDeg) {
+    var R = 6371000, d = distM / R, th = bearingDeg * Math.PI / 180;
+    var p1 = ll.lat * Math.PI / 180, l1 = ll.lng * Math.PI / 180;
+    var p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(th));
+    var l2 = l1 + Math.atan2(Math.sin(th) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+    return L.latLng(p2 * 180 / Math.PI, ((l2 * 180 / Math.PI) + 540) % 360 - 180);
+  }
+
+  function pushTrail(icao, ll, now) {
+    if (!state.showTrails) return;
+    var last = state.lastSample.get(icao) || 0;
+    if (now - last < 1000) return;
+    state.lastSample.set(icao, now);
+    var t = state.trails.get(icao) || [];
+    var prev = t[t.length - 1];
+    if (!prev || prev.distanceTo(ll) > 30) t.push(ll);
+    if (t.length > 120) t = t.slice(t.length - 120);
+    state.trails.set(icao, t);
+    if (t.length >= 2) {
+      var pl = state.trailLayers.get(icao);
+      if (!pl) {
+        pl = L.polyline(t, { color: '#d4af37', weight: 2, opacity: 0.55 });
+        pl.addTo(state.map);
+        state.trailLayers.set(icao, pl);
+      } else pl.setLatLngs(t);
+    }
+  }
+
+  function dropTrail(icao) {
+    var pl = state.trailLayers.get(icao);
+    if (pl) { state.map.removeLayer(pl); state.trailLayers.delete(icao); }
+    state.trails.delete(icao);
+    state.lastSample.delete(icao);
+  }
+
+  function setTrailsEnabled(on) {
+    state.showTrails = on;
+    if (!on) {
+      state.trailLayers.forEach(function (pl) { state.map.removeLayer(pl); });
+      state.trailLayers.clear();
+      state.lastSample.clear();
+    }
+  }
+
+  // Continuous live movement: every frame, glide each airborne plane along its
+  // heading/speed from its current displayed position. Poll results correct
+  // the position in apply(), so movement stays accurate.
+  function animateLoop() {
+    var now = performance.now();
+    var dt = state.lastFrame ? (now - state.lastFrame) / 1000 : 0;
+    state.lastFrame = now;
+    state.markers.forEach(function (m, icao) {
+      var f = m.flightData;
+      if (!f || f.lat == null || f.onGround || !f.speedMs || f.track == null) return;
+      m.setLatLng(destinationPoint(m.getLatLng(), f.speedMs * dt, f.track));
+      m.setIcon(planeIcon(f));
+      pushTrail(icao, m.getLatLng(), now);
+      if (state.follow && state.selected === icao) state.map.panTo(m.getLatLng(), { animate: false });
+    });
+    requestAnimationFrame(animateLoop);
+  }
+
   function drawRoute(f) {
     if (state.routeLayer) { state.map.removeLayer(state.routeLayer); state.routeLayer = null; }
     var dep = f.departureAirport, arr = f.arrivalAirport;
@@ -179,7 +248,7 @@
       }
     });
     state.markers.forEach(function (m, icao) {
-      if (!seen.has(icao)) { state.cluster.removeLayer(m); state.markers.delete(icao); }
+      if (!seen.has(icao)) { state.cluster.removeLayer(m); state.markers.delete(icao); dropTrail(icao); }
     });
 
     renderList();
@@ -290,6 +359,9 @@
 
     $('search').addEventListener('input', renderList);
     $('refresh-btn').addEventListener('click', tick);
+    $('trails').addEventListener('change', function (e) { setTrailsEnabled(e.target.checked); });
+    $('follow').addEventListener('change', function (e) { state.follow = e.target.checked; });
+    requestAnimationFrame(animateLoop);
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) clearTimeout(state.nextTimer);
       else tick();
