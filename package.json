@@ -1,7 +1,7 @@
 {
   "name": "emirates-flight-tracker",
   "version": "1.0.0",
-  "description": "Live map tracker for Emirates aircraft in the sky (OpenSky Network data + Leaflet map)",
+  "description": "Live and historical Emirates flight tracker: zoomable map + route lines (OpenSky Network data + Leaflet)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

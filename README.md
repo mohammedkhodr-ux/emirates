@@ -1,10 +1,20 @@
-# Emirates Live Tracker
+# Emirates Flight Tracker — Live & Historical
 
-A live map of **every Emirates aircraft currently in the sky**. Red plane markers
-show real-time positions; you can zoom in/out (scroll wheel, `+`/`-` buttons,
-double-click, pinch), cluster icons when zoomed out, click any plane or list
-entry to zoom to it, see altitude/speed/heading, and draw its great-circle
-route (Dubai ↔ destination).
+A map of **every Emirates aircraft in the sky — live or at any past time**.
+Red plane markers show real-time positions; you can zoom in/out (scroll wheel,
+`+`/`-` buttons, double-click, pinch) or jump straight to any **continent**
+(preset dropdown) or **country** (search box, or click the country on the map).
+Click any plane or list entry to zoom to it, see altitude/speed/heading, and
+draw its great-circle route (Dubai ↔ destination) plus its flown trail.
+
+Two display formats: **map** (plane markers with clustering) or **lines**
+(great-circle route lines for every flight), or both at once. The bottom bar
+is a **line chart** of the typical daily schedule (airborne flights per hour)
+— click it to scrub through time.
+
+**Historical mode**: pick any date, then scrub the 24 h timeline (slider, chart
+click, or ▶ play button) to replay which Emirates flights were airborne at that
+moment — real OpenSky history when online, simulated schedule in demo mode.
 
 ![stack](https://img.shields.io/badge/stack-Node.js%20%2B%20Leaflet-red)
 
@@ -79,19 +89,23 @@ DEMO=1 node server.js
 Generates ~50 simulated Emirates flights (UAE###) flying great-circle routes
 out of Dubai (DXB) to major destinations, with realistic altitude/speed
 profiles — useful for offline development or when the API is rate-limited.
-The UI shows a **DEMO DATA** badge in that case.
+The UI shows a **DEMO DATA** badge in that case. Historical mode (`?time=…`)
+and `/api/track` also work against the simulated fleet, so the whole app is
+fully usable offline (switch the basemap to "Vector only" if tiles are
+unreachable; country polygons are vendored in `public/vendor/countries.geo.json`).
 
 ## Project structure
 
 ```
-server.js               zero-dependency HTTP server (static + /api/flights)
+server.js               zero-dependency HTTP server (static + /api/*)
 lib/opensky.js          OpenSky REST client (OAuth2 client-credentials or anonymous)
 lib/airports.js         ICAO -> name/lat/lon table (Dubai hub + destinations)
-lib/demo.js             simulated fleet generator (great-circle routes from DXB)
-public/index.html       app shell
-public/app.js           map, markers, clustering, sidebar, polling
+lib/demo.js             simulated fleet generator + demo tracks (great-circle routes from DXB)
+lib/schedule.js         deterministic typical daily schedule per UTC date
+public/index.html       app shell (sidebar + map + timeline chart)
+public/app.js           map, markers/lines, clustering, zoom controls, historical replay, chart
 public/style.css        dark theme
-public/vendor/          vendored Leaflet 1.9.4 + MarkerCluster 1.5.3
+public/vendor/          vendored Leaflet 1.9.4 + MarkerCluster 1.5.3 + world countries GeoJSON
 ```
 
 ## API
@@ -99,6 +113,11 @@ public/vendor/          vendored Leaflet 1.9.4 + MarkerCluster 1.5.3
 - `GET /api/flights` → `{ source: live|cached|demo, count, airborne, flights: [...] }`
   where each flight has `callsign, lat, lon, altitudeFt, speedKn, track,
   verticalRateFpm, onGround, lastContact, departure/arrival (+ airport info), …`
+- `GET /api/flights?time=<unix-seconds>` → same payload with `historical: true`
+  for any past timestamp (OpenSky `/states/all?time=…`, or simulated data in demo mode)
+- `GET /api/track?icao24=<hex>&time=<unix-seconds>` → `{ path: [[ts, lat, lon, altM, track], …] }`
+  (OpenSky `/tracks`, or simulated trail in demo mode)
+- `GET /api/schedule?date=YYYY-MM-DD` → typical daily schedule (drives the line chart)
 - `GET /api/health` → server status
 
 ## Deploy to Mistral Apps (Vibe catalog)

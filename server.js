@@ -4,7 +4,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { OpenskyClient } = require('./lib/opensky');
-const { demoFlights } = require('./lib/demo');
+const { demoFlights, demoTrack } = require('./lib/demo');
+const { scheduleForDate } = require('./lib/schedule');
 const { airportInfo } = require('./lib/airports');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -26,6 +27,10 @@ let cache = loadCache();
 let lastUpstreamAt = 0;
 let cooldownUntil = 0;
 let inflight = null;
+
+const HIST_MIN_MS = 10000;
+let lastHistAt = 0;
+const histCache = new Map();
 
 function loadCache() {
   try {
@@ -210,15 +215,127 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+async function routesByCallsignAround(timeSec) {
+  const map = new Map();
+  try {
+    const fr = await client.fetchFlightsRange(timeSec - 2 * 3600, timeSec + 300);
+    if (fr.ok) {
+      const fj = await fr.json();
+      for (const fl of fj || []) {
+        if (fl && fl.callsign) map.set(String(fl.callsign).trim(), fl);
+      }
+    }
+  } catch { /* route info is best-effort */ }
+  return map;
+}
+
+function statesPayload(data, updatedAtMs, historical, timeSec) {
+  return routesByCallsignAround(timeSec || Math.floor(Date.now() / 1000)).then(routes => {
+    const flights = (data.states || [])
+      .filter(s => s[1] && EMIRATES_CALLSIGN.test(String(s[1]).trim()))
+      .map(s => mapState(s, routes));
+    flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
+    return {
+      source: 'live',
+      historical: !!historical,
+      serverTime: data.time ?? timeSec ?? Math.floor(updatedAtMs / 1000),
+      updatedAt: updatedAtMs,
+      count: flights.length,
+      airborne: flights.filter(f => !f.onGround).length,
+      flights
+    };
+  });
+}
+
+// Flights airborne at an arbitrary past timestamp (OpenSky history, or demo data).
+async function getFlightsAt(timeSec) {
+  timeSec = Math.floor(timeSec);
+  if (DEMO) {
+    const p = demoPayload(timeSec * 1000);
+    return { ...p, historical: true, serverTime: timeSec };
+  }
+  const bucket = Math.floor(timeSec / 300);
+  if (histCache.has(bucket)) return histCache.get(bucket);
+  const now = Date.now();
+  if (now - lastHistAt < HIST_MIN_MS && histCache.size) {
+    const nearest = histCache.get(Math.floor((timeSec - 300) / 300)) || histCache.get(Math.floor((timeSec + 300) / 300));
+    if (nearest) return nearest;
+  }
+  lastHistAt = now;
+  try {
+    const res = await client.fetchStatesAll(timeSec);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const payload = await statesPayload(data, now, true, timeSec);
+    histCache.set(bucket, payload);
+    if (histCache.size > 500) histCache.delete(histCache.keys().next().value);
+    return payload;
+  } catch {
+    const p = demoPayload(timeSec * 1000);
+    return { ...p, historical: true, serverTime: timeSec, note: 'history unavailable, simulated data' };
+  }
+}
+
+async function getTrack(icao24, timeSec) {
+  if (DEMO) {
+    const t = demoTrack(icao24, timeSec || Math.floor(Date.now() / 1000));
+    if (t) return t;
+    throw new Error('unknown icao24');
+  }
+  const res = await client.fetchTrack(icao24, timeSec);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  const path = (data.path || []).map(p => [
+    p[0],
+    p[1] != null ? Number(p[1].toFixed(5)) : null,
+    p[2] != null ? Number(p[2].toFixed(5)) : null,
+    p[3] != null ? Math.round(p[3]) : null,
+    p[4] != null ? Math.round(p[4]) : null
+  ]);
+  return {
+    icao24: data.icao24,
+    callsign: data.callsign || null,
+    departure: data.departure_airport || null,
+    arrival: data.arrival_airport || null,
+    source: 'live',
+    path
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
   const p = u.pathname;
   if (p === '/api/flights') {
     try {
-      sendJson(res, 200, await getFlights());
+      const timeParam = u.searchParams.get('time');
+      const timeSec = timeParam && /^\d+$/.test(timeParam) ? Number(timeParam) : null;
+      if (timeSec && timeSec < Math.floor(Date.now() / 1000) - 60) {
+        sendJson(res, 200, await getFlightsAt(timeSec));
+      } else {
+        sendJson(res, 200, await getFlights());
+      }
     } catch (e) {
       sendJson(res, 500, { error: String((e && e.message) || e) });
     }
+    return;
+  }
+  if (p === '/api/track') {
+    try {
+      const icao24 = u.searchParams.get('icao24') || '';
+      const timeParam = u.searchParams.get('time');
+      const timeSec = timeParam && /^\d+$/.test(timeParam) ? Number(timeParam) : Math.floor(Date.now() / 1000);
+      if (!icao24) { sendJson(res, 400, { error: 'icao24 required' }); return; }
+      sendJson(res, 200, await getTrack(icao24, timeSec));
+    } catch (e) {
+      sendJson(res, 502, { error: String((e && e.message) || e) });
+    }
+    return;
+  }
+  if (p === '/api/schedule') {
+    const date = u.searchParams.get('date') || new Date().toISOString().slice(0, 10);
+    const sched = scheduleForDate(date);
+    if (!sched) { sendJson(res, 400, { error: 'date must be YYYY-MM-DD' }); return; }
+    sendJson(res, 200, sched);
     return;
   }
   if (p === '/api/health') {

@@ -4,6 +4,17 @@
   var REFRESH_MS = 45000;
   var PLANE_PATH = 'M21,16v-2l-8-5V3.5C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1v-1.5L13,19v-5.5L21,16z';
 
+  var CONTINENTS = {
+    world: [[-85, -180], [85, 180]],
+    africa: [[-35, -20], [38, 52]],
+    europe: [[34, -12], [72, 45]],
+    asia: [[-2, 25], [78, 180]],
+    mideast: [[12, 25], [45, 63]],
+    namerica: [[13, -170], [73, -52]],
+    samerica: [[-57, -82], [14, -34]],
+    oceania: [[-48, 108], [2, 180]]
+  };
+
   var state = {
     payload: null,
     map: null,
@@ -19,7 +30,20 @@
     lastSample: new Map(),
     showTrails: true,
     follow: false,
-    lastFrame: 0
+    lastFrame: 0,
+    allRoutesLayer: null,
+    selTrailLayer: null,
+    countryLayer: null,
+    countryIndex: {},
+    mode: 'live',
+    playing: false,
+    playTimer: null,
+    histDate: null,
+    histMin: 0,
+    view: 'both',
+    schedule: null,
+    tileErrors: 0,
+    offlineBasemap: false
   };
 
   function $(id) { return document.getElementById(id); }
@@ -40,6 +64,12 @@
     if (d < 60) return d + 's ago';
     if (d < 3600) return Math.floor(d / 60) + 'm ago';
     return Math.floor(d / 3600) + 'h ago';
+  }
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function todayStr() { return new Date().toISOString().slice(0, 10); }
+  function fmtHM(min) { return pad2(Math.floor(min / 60)) + ':' + pad2(min % 60) + ' UTC'; }
+  function histEpoch() {
+    return Math.floor(Date.parse(state.histDate + 'T00:00:00Z') / 1000) + state.histMin * 60;
   }
 
   function planeIcon(f) {
@@ -186,6 +216,186 @@
     state.routeLayer = g;
   }
 
+  function drawAllRoutes() {
+    if (state.allRoutesLayer) { state.map.removeLayer(state.allRoutesLayer); state.allRoutesLayer = null; }
+    if (state.view === 'markers' || !state.payload) return;
+    var g = L.layerGroup();
+    state.payload.flights.forEach(function (f) {
+      var dep = f.departureAirport, arr = f.arrivalAirport;
+      if (!dep || !arr || dep.lat == null || arr.lat == null) return;
+      var selected = state.selected === f.icao24;
+      var line = L.polyline(greatCircle({ lat: dep.lat, lon: dep.lon }, { lat: arr.lat, lon: arr.lon }, 64), {
+        color: selected ? '#d71920' : 'rgba(212,175,55,0.45)',
+        weight: selected ? 3 : 1.4,
+        dashArray: selected ? null : '4 7',
+        opacity: 0.9,
+        interactive: state.view === 'lines'
+      });
+      if (state.view === 'lines') {
+        line.on('click', function () { select(f.icao24, false); });
+        line.bindTooltip(esc(f.callsign) + ' · ' + routeText(f), { direction: 'top', sticky: true });
+      }
+      line.addTo(g);
+      if (f.lat != null && f.lon != null) {
+        L.circleMarker([f.lat, f.lon], {
+          radius: selected ? 6 : 3.5,
+          color: selected ? '#fff' : '#d4af37',
+          fillColor: selected ? '#d71920' : '#d4af37',
+          fillOpacity: 0.95, weight: 1.5,
+          interactive: state.view === 'lines'
+        }).on('click', function () { select(f.icao24, false); }).addTo(g);
+      }
+    });
+    g.addTo(state.map);
+    state.allRoutesLayer = g;
+  }
+
+  async function drawSelTrail(icao24) {
+    if (state.selTrailLayer) { state.map.removeLayer(state.selTrailLayer); state.selTrailLayer = null; }
+    var t = state.mode === 'live' ? Math.floor(Date.now() / 1000) : histEpoch();
+    try {
+      var r = await fetch('/api/track?icao24=' + encodeURIComponent(icao24) + '&time=' + t, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var data = await r.json();
+      if (!data.path || data.path.length < 2) return;
+      var g = L.layerGroup();
+      L.polyline(data.path.map(function (p) { return [p[1], p[2]]; }), { color: '#d71920', weight: 3, opacity: 0.95 }).addTo(g);
+      var first = data.path[0], last = data.path[data.path.length - 1];
+      L.circleMarker([first[1], first[2]], { radius: 5, color: '#238636', fillColor: '#238636', fillOpacity: 1 }).addTo(g);
+      L.circleMarker([last[1], last[2]], { radius: 5, color: '#d71920', fillColor: '#d71920', fillOpacity: 1 }).addTo(g);
+      g.addTo(state.map);
+      state.selTrailLayer = g;
+    } catch (e) { /* track unavailable — route line stays */ }
+  }
+
+  function stopPlay() {
+    state.playing = false;
+    var pb = $('play-btn');
+    if (pb) pb.textContent = '▶';
+    if (state.playTimer) { clearInterval(state.playTimer); state.playTimer = null; }
+  }
+
+  function setMode(mode) {
+    if (state.mode === mode) return;
+    state.mode = mode;
+    stopPlay();
+    $('mode-live').classList.toggle('active', mode === 'live');
+    $('mode-hist').classList.toggle('active', mode === 'historical');
+    $('hist-panel').classList.toggle('hidden', mode !== 'historical');
+    clearTimeout(state.nextTimer);
+    tick();
+    drawChart();
+  }
+
+  async function loadSchedule(dateStr) {
+    try {
+      var r = await fetch('/api/schedule?date=' + encodeURIComponent(dateStr), { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      state.schedule = await r.json();
+    } catch (e) {
+      state.schedule = null;
+    }
+    drawChart();
+  }
+
+  function drawChart() {
+    var cv = $('chart');
+    if (!cv || !state.map) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth || 600, h = cv.clientHeight || 64;
+    cv.width = w * dpr; cv.height = h * dpr;
+    var ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    if (!state.schedule || !state.schedule.flights || !state.histDate) return;
+    var padL = 34, padR = 10, padT = 6, padB = 15;
+    var iw = w - padL - padR, ih = h - padT - padB;
+    var buckets = new Array(48).fill(0);
+    var dayStart = Date.parse(state.histDate + 'T00:00:00Z') / 1000;
+    state.schedule.flights.forEach(function (f) {
+      for (var b = 0; b < 48; b++) {
+        var bs = dayStart + b * 1800, be = bs + 1800;
+        if (f.depSec < be && f.arrSec > bs) buckets[b]++;
+      }
+    });
+    var max = Math.max(1, Math.max.apply(null, buckets));
+    ctx.strokeStyle = '#30363d';
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.lineWidth = 1;
+    for (var hh = 0; hh <= 24; hh += 6) {
+      var x = padL + iw * hh / 24;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih); ctx.stroke();
+      ctx.fillText(pad2(hh) + ':00', x - 9, h - 4);
+    }
+    ctx.beginPath();
+    buckets.forEach(function (c, i) {
+      var bx = padL + iw * (i + 0.5) / 48;
+      var by = padT + ih - (c / max) * ih;
+      if (i === 0) ctx.moveTo(bx, by); else ctx.lineTo(bx, by);
+    });
+    ctx.strokeStyle = '#d4af37';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.lineTo(padL + iw, padT + ih);
+    ctx.lineTo(padL, padT + ih);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(212,175,55,0.16)';
+    ctx.fill();
+    var curMin = state.mode === 'historical'
+      ? state.histMin
+      : (Math.floor(Date.now() / 1000) - dayStart) / 60;
+    if (curMin >= 0 && curMin <= 1440) {
+      var cx = padL + iw * curMin / 1440;
+      ctx.strokeStyle = '#d71920';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(cx, padT); ctx.lineTo(cx, padT + ih); ctx.stroke();
+    }
+  }
+
+  function map_fitCountry(feature) {
+    var layer = L.geoJSON(feature);
+    state.map.fitBounds(layer.getBounds(), { padding: [28, 28] });
+  }
+
+  function loadCountries() {
+    fetch('/vendor/countries.geo.json').then(function (r) { return r.json(); }).then(function (gj) {
+      state.countryLayer = L.geoJSON(gj, {
+        style: { color: 'rgba(110,140,190,0.4)', weight: 0.8, fillColor: '#182236', fillOpacity: 0.3 },
+        onEachFeature: function (feature, layer) {
+          var name = feature.properties.name;
+          state.countryIndex[name] = feature;
+          layer.on('click', function () {
+            layer.setStyle({ fillColor: '#d4af37', fillOpacity: 0.18 });
+            setTimeout(function () { layer.setStyle({ fillColor: '#182236', fillOpacity: 0.3 }); }, 900);
+            map_fitCountry(feature);
+          });
+        }
+      });
+      state.map.addLayer(state.countryLayer);
+      var dl = $('countries-list');
+      gj.features.forEach(function (f) {
+        var opt = document.createElement('option');
+        opt.value = f.properties.name;
+        dl.appendChild(opt);
+      });
+    }).catch(function () { /* country overlay optional */ });
+  }
+
+  function onTileError() {
+    state.tileErrors++;
+    if (state.tileErrors > 10 && !state.offlineBasemap) {
+      state.offlineBasemap = true;
+      state.map.eachLayer(function (l) {
+        if (l instanceof L.TileLayer) state.map.removeLayer(l);
+      });
+      var note = $('badge-note');
+      if (note && state.mode === 'live' && (!state.payload || state.payload.source === 'live')) {
+        note.textContent = 'tiles unreachable — vector basemap';
+      }
+    }
+  }
+
   function select(icao, fly) {
     var flights = state.payload ? state.payload.flights : [];
     var f = null;
@@ -197,21 +407,28 @@
     var m = state.markers.get(icao);
     if (f.lat != null && f.lon != null) {
       if (fly !== false) state.map.flyTo([f.lat, f.lon], Math.max(state.map.getZoom(), 7), { duration: 0.5 });
-      if (m) m.openPopup();
+      if (m && state.view !== 'lines') m.openPopup();
       drawRoute(f);
+      drawSelTrail(icao);
     }
+    drawAllRoutes();
     var row = document.querySelector('.fl-item[data-icao="' + icao + '"]');
     if (row) row.scrollIntoView({ block: 'nearest' });
   }
 
   function setBadge(p) {
     var b = $('badge');
-    var map = { live: ['LIVE', 'b-live'], cached: ['CACHED', 'b-cached'], demo: ['DEMO DATA', 'b-demo'] };
+    var map = {
+      live: [p.historical ? 'HISTORY' : 'LIVE', p.historical ? 'b-hist' : 'b-live'],
+      cached: ['CACHED', 'b-cached'],
+      demo: [p.historical ? 'HISTORY·DEMO' : 'DEMO DATA', p.historical ? 'b-hist' : 'b-demo']
+    };
     var pair = map[p.source] || ['OFFLINE', 'b-off'];
     b.textContent = pair[0];
     b.className = 'badge ' + pair[1];
     var note = $('badge-note');
-    if (p.source === 'cached' && p.dataAgeSec != null) note.textContent = 'rate-limited · data ' + p.dataAgeSec + 's old';
+    if (p.note) note.textContent = p.note;
+    else if (p.source === 'cached' && p.dataAgeSec != null) note.textContent = 'rate-limited · data ' + p.dataAgeSec + 's old';
     else if (p.retryAfterSec) note.textContent = 'rate limited, retry in ' + p.retryAfterSec + 's';
     else if (p.source === 'demo') note.textContent = 'simulated data (set DEMO=0 for live)';
     else note.textContent = '';
@@ -222,14 +439,20 @@
     setBadge(p);
     $('stat-count').textContent = p.airborne != null ? p.airborne : p.count;
     $('stat-total').textContent = p.count;
-    $('stat-updated').textContent = 'updated ' + relTime(Math.floor((p.updatedAt || Date.now()) / 1000));
+    var asOf = p.serverTime || Math.floor((p.updatedAt || Date.now()) / 1000);
+    $('stat-updated').textContent = (p.historical ? 'as of ' : 'updated ') +
+      new Date(asOf * 1000).toISOString().slice(0, 10) + ' ' + fmtHM((asOf % 86400) / 60 | 0);
+
+    var useCluster = state.view !== 'lines';
+    if (useCluster && !state.map.hasLayer(state.cluster)) state.map.addLayer(state.cluster);
+    if (!useCluster && state.map.hasLayer(state.cluster)) state.map.removeLayer(state.cluster);
 
     var seen = new Set();
     p.flights.forEach(function (f) {
       seen.add(f.icao24);
       var hasPos = f.lat != null && f.lon != null;
       var m = state.markers.get(f.icao24);
-      if (hasPos) {
+      if (hasPos && useCluster) {
         if (!m) {
           m = L.marker([f.lat, f.lon], { icon: planeIcon(f), title: f.callsign });
           m.on('click', function () { select(f.icao24); });
@@ -251,6 +474,7 @@
       if (!seen.has(icao)) { state.cluster.removeLayer(m); state.markers.delete(icao); dropTrail(icao); }
     });
 
+    drawAllRoutes();
     renderList();
     if (!state.fitted && p.flights.some(function (f) { return f.lat != null; })) {
       fitAll();
@@ -287,13 +511,17 @@
   function fitAll() {
     var pts = [];
     state.markers.forEach(function (m) { pts.push(m.getLatLng()); });
+    if (state.payload) {
+      state.payload.flights.forEach(function (f) { if (f.lat != null) pts.push([f.lat, f.lon]); });
+    }
     if (!pts.length) { state.map.setView([24, 45], 3); return; }
     state.map.fitBounds(L.latLngBounds(pts).pad(0.12), { maxZoom: 6 });
   }
 
   async function tick() {
     try {
-      var r = await fetch('/api/flights', { cache: 'no-store' });
+      var url = state.mode === 'live' ? '/api/flights' : '/api/flights?time=' + histEpoch();
+      var r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       apply(await r.json());
     } catch (e) {
@@ -302,11 +530,18 @@
       b.className = 'badge b-off';
     }
     clearTimeout(state.nextTimer);
-    state.nextAt = Date.now() + REFRESH_MS;
-    state.nextTimer = setTimeout(tick, REFRESH_MS);
+    if (state.mode === 'live') {
+      state.nextAt = Date.now() + REFRESH_MS;
+      state.nextTimer = setTimeout(tick, REFRESH_MS);
+    }
   }
 
   function init() {
+    var now = new Date();
+    state.histDate = todayStr();
+    state.histMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+    var vectorOnly = L.layerGroup();
     var std = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -316,6 +551,8 @@
       subdomains: 'abcd',
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>'
     });
+    std.on('tileerror', onTileError);
+    dark.on('tileerror', onTileError);
     state.map = L.map('map', {
       center: [24, 45],
       zoom: 3,
@@ -327,7 +564,7 @@
       worldCopyJump: true,
       layers: [std]
     });
-    L.control.layers({ 'Standard': std, 'Dark': dark }, {}, { position: 'topright' }).addTo(state.map);
+    L.control.layers({ 'Standard': std, 'Dark': dark, 'Vector only (offline)': vectorOnly }, {}, { position: 'topright' }).addTo(state.map);
     state.cluster = L.markerClusterGroup({
       maxClusterRadius: 55,
       disableClusteringAtZoom: 9,
@@ -353,7 +590,7 @@
       var btn = el && el.querySelector('.route-btn');
       if (btn) btn.addEventListener('click', function () {
         var m = state.markers.get(btn.dataset.icao);
-        if (m && m.flightData) drawRoute(m.flightData);
+        if (m && m.flightData) { drawRoute(m.flightData); drawSelTrail(btn.dataset.icao); }
       });
     });
 
@@ -364,13 +601,86 @@
     requestAnimationFrame(animateLoop);
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) clearTimeout(state.nextTimer);
-      else tick();
+      else if (state.mode === 'live') tick();
     });
     setInterval(function () {
       var el = $('stat-next');
-      if (state.nextAt) el.textContent = 'refresh in ' + Math.max(0, Math.ceil((state.nextAt - Date.now()) / 1000)) + 's';
+      if (state.nextAt && state.mode === 'live') el.textContent = 'refresh in ' + Math.max(0, Math.ceil((state.nextAt - Date.now()) / 1000)) + 's';
+      else el.textContent = '';
     }, 1000);
 
+    $('mode-live').addEventListener('click', function () { setMode('live'); });
+    $('mode-hist').addEventListener('click', function () { setMode('historical'); });
+
+    var dateInput = $('hist-date');
+    dateInput.value = state.histDate;
+    dateInput.max = todayStr();
+    dateInput.addEventListener('change', function () {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput.value)) return;
+      state.histDate = dateInput.value;
+      loadSchedule(state.histDate);
+      tick();
+    });
+
+    var slider = $('time-slider');
+    slider.value = state.histMin;
+    $('hist-time').textContent = fmtHM(state.histMin);
+    var sliderTimer = null;
+    slider.addEventListener('input', function () {
+      state.histMin = parseInt(slider.value, 10);
+      $('hist-time').textContent = fmtHM(state.histMin);
+      drawChart();
+      if (sliderTimer) clearTimeout(sliderTimer);
+      sliderTimer = setTimeout(function () { if (state.mode === 'historical') tick(); }, 250);
+    });
+
+    $('play-btn').addEventListener('click', function () {
+      if (state.playing) { stopPlay(); return; }
+      if (state.mode !== 'historical') setMode('historical');
+      state.playing = true;
+      $('play-btn').textContent = '⏸';
+      state.playTimer = setInterval(function () {
+        state.histMin = (state.histMin + 10) % 1440;
+        slider.value = state.histMin;
+        $('hist-time').textContent = fmtHM(state.histMin);
+        drawChart();
+        tick();
+      }, 450);
+    });
+
+    $('continent').addEventListener('change', function (e) {
+      var b = CONTINENTS[e.target.value];
+      if (b) state.map.fitBounds(b, { padding: [16, 16] });
+    });
+
+    $('country-search').addEventListener('change', function (e) {
+      var f = state.countryIndex[e.target.value];
+      if (f) map_fitCountry(f);
+    });
+
+    $('view-format').addEventListener('change', function (e) {
+      state.view = e.target.value;
+      apply(state.payload || { flights: [] });
+    });
+
+    $('chart').addEventListener('click', function (e) {
+      var cv = e.target;
+      var rect = cv.getBoundingClientRect();
+      var padL = 34, padR = 10;
+      var frac = (e.clientX - rect.left - padL) / Math.max(1, rect.width - padL - padR);
+      var min = Math.max(0, Math.min(1439, Math.round(frac * 1440)));
+      if (state.mode !== 'historical') setMode('historical');
+      state.histMin = min;
+      slider.value = min;
+      $('hist-time').textContent = fmtHM(min);
+      drawChart();
+      tick();
+    });
+
+    window.addEventListener('resize', drawChart);
+
+    loadCountries();
+    loadSchedule(state.histDate);
     tick();
   }
 

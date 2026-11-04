@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Emirates Live Tracker</title>
+<title>Emirates Flight Tracker — Live &amp; Historical</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23d71920' d='M21,16v-2l-8-5V3.5C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1v-1.5L13,19v-5.5L21,16z'/></svg>">
 <link rel="stylesheet" href="/vendor/leaflet.css">
 <link rel="stylesheet" href="/vendor/MarkerCluster.css">
@@ -15,9 +15,40 @@
   <div class="brand">
     <span class="brand-icon">✈</span>
     <div>
-      <h1>Emirates Live Tracker</h1>
-      <p>Every Emirates aircraft in the sky, right now</p>
+      <h1>Emirates Flight Tracker</h1>
+      <p>Live &amp; historical Emirates flights worldwide</p>
     </div>
+  </div>
+  <div class="seg">
+    <button id="mode-live" class="active">Live</button>
+    <button id="mode-hist">Historical</button>
+  </div>
+  <div id="hist-panel" class="hidden">
+    <div class="hist-row">
+      <input type="date" id="hist-date">
+      <button id="play-btn" title="Play / pause replay">▶</button>
+      <span id="hist-time" class="mono">00:00 UTC</span>
+    </div>
+    <input type="range" id="time-slider" min="0" max="1439" value="0" title="Time of day (UTC)">
+  </div>
+  <div class="zoom-row">
+    <select id="continent" title="Zoom to continent">
+      <option value="world">World</option>
+      <option value="africa">Africa</option>
+      <option value="europe">Europe</option>
+      <option value="asia">Asia</option>
+      <option value="mideast">Middle East</option>
+      <option value="namerica">North America</option>
+      <option value="samerica">South America</option>
+      <option value="oceania">Oceania</option>
+    </select>
+    <input id="country-search" list="countries-list" placeholder="Zoom to country…" autocomplete="off">
+    <datalist id="countries-list"></datalist>
+    <select id="view-format" title="Map or line format">
+      <option value="both">Map + lines</option>
+      <option value="markers">Map only</option>
+      <option value="lines">Lines only</option>
+    </select>
   </div>
   <div class="stats">
     <div class="stat"><span class="stat-num" id="stat-count">–</span><span class="stat-label">airborne</span></div>
@@ -36,7 +67,13 @@
     Unofficial project — not affiliated with Emirates
   </div>
 </div>
-<div id="map"></div>
+<div id="map-area">
+  <div id="map"></div>
+  <div id="chartbar">
+    <canvas id="chart"></canvas>
+    <div id="chart-label">typical daily schedule — click to scrub time</div>
+  </div>
+</div>
 <script src="/vendor/leaflet.js"></script>
 <script src="/vendor/leaflet.markercluster.js"></script>
 <script src="/app.js"></script>
