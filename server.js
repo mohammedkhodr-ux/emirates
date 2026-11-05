@@ -496,7 +496,7 @@ async function routesByCallsignAround(timeSec) {
 }
 
 function statesPayload(data, updatedAtMs, historical, timeSec) {
-  return routesByCallsignAround(timeSec || Math.floor(Date.now() / 1000)).then(routes => {
+  return routesByCallsignAround(timeSec || Math.floor(Date.now() / 1000)).then(async routes => {
     const flights = (data.states || [])
       .filter(s => s[1] && isTracked(String(s[1]).trim()))
       .map(s => mapState(s, routes));

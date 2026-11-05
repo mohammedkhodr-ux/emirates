@@ -709,7 +709,6 @@
         { id: 'G9', name: 'Air Arabia', color: '#fb923c' },
         { id: 'QR', name: 'Qatar Airways', color: '#c026d3' },
         { id: 'SV', name: 'Saudia', color: '#38bdf8' },
-        { id: 'NA', name: 'Nas Air', color: '#a855f7' },
         { id: 'EY', name: 'Etihad Airways', color: '#fbbf24' }
       ];
       renderLegend();

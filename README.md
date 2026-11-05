@@ -1,8 +1,8 @@
 # Middle East Airlines Tracker — Live & Historical
 
 A map of **every tracked Middle East carrier in the sky — live or at any past
-time**: Emirates, flydubai, Air Arabia, Qatar Airways, Saudia, Nas Air and
-Etihad, each in its **own color** (click a legend chip to show/hide a carrier).
+time**: Emirates, flydubai, Air Arabia, Qatar Airways, Saudia and Etihad,
+each in its **own color** (click a legend chip to show/hide a carrier).
 Hover any plane for its full data (callsign + flight number, route, altitude,
 speed, heading, vertical rate, position, status). Each flight's path is drawn
 split at the current position: **solid line = already travelled**, **dotted
