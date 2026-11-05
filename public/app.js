@@ -47,7 +47,8 @@
     carriers: [],
     hiddenCarriers: new Set(),
     visibleFlights: [],
-    statusFilter: 'all'
+    statusFilter: 'all',
+    popup: null
   };
 
   function $(id) { return document.getElementById(id); }
@@ -328,7 +329,7 @@
       var color = selected ? '#ffffff' : colorOf(f);
       var interactive = true;
       function bind(l) {
-        l.on('click', function () { select(f.icao24, false); });
+        l.on('click', function () { select(f.icao24); });
         l.bindTooltip(function () { return tooltipHtml(f); }, { direction: 'top', sticky: true, className: 'plane-tip' });
       }
       if (seg.flown && seg.flown.length >= 2) {
@@ -345,8 +346,7 @@
           fillOpacity: 0.95, weight: 1.5,
           interactive: interactive
         }).addTo(g);
-        cm.on('click', function () { select(f.icao24, false); });
-        cm.bindPopup(function () { return popupHtml(f); }, { maxWidth: 290 });
+        cm.on('click', function () { select(f.icao24); });
         cm.bindTooltip(function () { return tooltipHtml(f); }, { direction: 'top', className: 'plane-tip' });
       }
     });
@@ -511,7 +511,10 @@
     var m = state.markers.get(icao);
     if (f.lat != null && f.lon != null) {
       if (fly !== false) state.map.flyTo([f.lat, f.lon], Math.max(state.map.getZoom(), 7), { duration: 0.5 });
-      if (m && state.view !== 'lines') m.openPopup();
+      // Standalone map-anchored popup: works even when the plane marker is
+      // still inside a cluster and not on the map.
+      if (state.popup) state.map.closePopup(state.popup);
+      state.popup = L.popup({ maxWidth: 290 }).setLatLng([f.lat, f.lon]).setContent(popupHtml(f)).openOn(state.map);
       drawRoute(f);
       drawSelTrail(icao);
     }
@@ -567,7 +570,6 @@
         if (!m) {
           m = L.marker([f.lat, f.lon], { icon: planeIcon(f) });
           m.on('click', function () { select(f.icao24); });
-          m.bindPopup(function () { return popupHtml(m.flightData); }, { maxWidth: 290 });
           m.bindTooltip(function () { return tooltipHtml(m.flightData); }, { sticky: true, direction: 'top', className: 'plane-tip' });
           m._lastRot = f.track != null ? Math.round(f.track) : 0;
           m._lastGround = !!f.onGround;
@@ -583,7 +585,6 @@
           }
         }
         m.flightData = f;
-        if (m.isPopupOpen()) m.setPopupContent(popupHtml(f));
         if (m.isTooltipOpen()) m.setTooltipContent(tooltipHtml(f));
       } else if (m) {
         state.cluster.removeLayer(m);
@@ -599,6 +600,11 @@
     renderLegend();
     renderAnalytics();
     renderReport();
+    if (state.selected && state.popup && state.popup.isOpen()) {
+      var sf = null;
+      state.visibleFlights.forEach(function (x) { if (x.icao24 === state.selected) sf = x; });
+      if (sf) state.popup.setContent(popupHtml(sf));
+    }
     if (!state.fitted && state.visibleFlights.some(function (f) { return f.lat != null; })) {
       fitAll();
       state.fitted = true;
@@ -1093,6 +1099,7 @@
     initReports();
     loadCountries();
     loadSchedule(state.histDate);
+    window.__tracker = state;
     tick();
   }
 
