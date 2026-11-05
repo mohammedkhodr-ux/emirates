@@ -199,10 +199,10 @@ overridden to `0.0.0.0` inside the container.
 ## Carrier matching (why counts match FlightAware)
 
 Aircraft are matched by ATC callsign prefix (`UAE`, `FDB`, `ABY`, `QTR`,
-`SVA`, `ETD`) **and** by UAE-registered `A6-###` registration-callsigns (many
-Emirates/Etihad/flydubai/Air Arabia flights broadcast the tail, not the
-flight number) — attributed via a learned icao24→carrier map plus registration
-prefixes (A6-E/O→Emirates, A6-F→flydubai, A6-A→Air Arabia, A6-B→Etihad).
+`SVA`, `ETD`) **and** by registration-callsigns (`A6-ENY`, `A7-BFS`, `HZ-…` —
+many flights broadcast the tail, not the flight number) — attributed via a
+learned icao24→carrier map plus registration prefixes (A6-E/O→Emirates,
+A6-F→flydubai, A6-A→Air Arabia, A6-B→Etihad, A7-→Qatar Airways, HZ-→Saudia).
 Positions are merged from OpenSky and adsb.lol, keeping the fresher fix, so
 coverage is close to FlightAware's.
 

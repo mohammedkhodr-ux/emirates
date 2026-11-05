@@ -23,19 +23,16 @@ const client = new OpenskyClient({
   clientSecret: process.env.OPENSKY_CLIENT_SECRET || null
 });
 
-// Tracked Middle East carriers are matched by ATC callsign prefix; UAE-registered
-// aircraft broadcasting their A6- registration as callsign are attributed via a
-// learned icao24->carrier map (from callsigned sightings) or registration prefix.
+// Tracked Middle East carriers are matched by ATC callsign prefix; aircraft
+// broadcasting their registration as callsign (A6-ENY, A7-BFS, HZ-…) are
+// attributed via a learned icao24->carrier map (from callsigned sightings)
+// first, then registration prefix.
 const learnedCarrier = new Map(); // icao24 -> carrier id
-function isUaeIcao(icao24) {
-  const n = parseInt(String(icao24 || ''), 16);
-  return !Number.isNaN(n) && n >= 0x896000 && n < 0x896800;
-}
 function matchCarrier(icao24, callsign, country) {
   const c = carrierOf(callsign);
   if (c) { if (icao24) learnedCarrier.set(String(icao24).toLowerCase(), c.id); return c; }
   const cs = String(callsign || '').trim();
-  if (/^A6[A-Z0-9]{3}$/i.test(cs) && (country === 'United Arab Emirates' || isUaeIcao(icao24))) {
+  if (/^[A-Z0-9]{2}-[A-Z0-9]{2,3}$/i.test(cs)) {
     const byIcao = learnedCarrier.get(String(icao24 || '').toLowerCase());
     if (byIcao) return CARRIERS.find(x => x.id === byIcao) || null;
     return carrierByReg(cs);
