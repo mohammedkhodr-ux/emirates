@@ -196,6 +196,16 @@ The platform builds the Docker image (Node 22, binds `0.0.0.0:$PORT`), runs
 raise the OpenSky rate limit. `HOST` stays `127.0.0.1` for local runs and is
 overridden to `0.0.0.0` inside the container.
 
+## Carrier matching (why counts match FlightAware)
+
+Aircraft are matched by ATC callsign prefix (`UAE`, `FDB`, `ABY`, `QTR`,
+`SVA`, `ETD`) **and** by UAE-registered `A6-###` registration-callsigns (many
+Emirates/Etihad/flydubai/Air Arabia flights broadcast the tail, not the
+flight number) — attributed via a learned icao24→carrier map plus registration
+prefixes (A6-E/O→Emirates, A6-F→flydubai, A6-A→Air Arabia, A6-B→Etihad).
+Positions are merged from OpenSky and adsb.lol, keeping the fresher fix, so
+coverage is close to FlightAware's.
+
 ## Data sources (no rate limits)
 
 Primary: **OpenSky Network** (`/states/all` + `/flights/*`) — positions and

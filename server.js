@@ -7,7 +7,7 @@ const { OpenskyClient } = require('./lib/opensky');
 const { demoFlights, demoTrack } = require('./lib/demo');
 const { scheduleForDate } = require('./lib/schedule');
 const { airportInfo } = require('./lib/airports');
-const { CARRIERS, carrierOf, flightNumber } = require('./lib/carriers');
+const { CARRIERS, carrierOf, carrierByReg, flightNumber } = require('./lib/carriers');
 const rag = require('./lib/rag');
 const adsb = require('./lib/adsblol');
 
@@ -23,10 +23,28 @@ const client = new OpenskyClient({
   clientSecret: process.env.OPENSKY_CLIENT_SECRET || null
 });
 
-// Tracked Middle East carriers are matched by ATC callsign prefix (see lib/carriers.js).
-function isTracked(callsign) { return !!carrierOf(callsign); }
-function carrierTag(f) {
-  const c = carrierOf(f.callsign);
+// Tracked Middle East carriers are matched by ATC callsign prefix; UAE-registered
+// aircraft broadcasting their A6- registration as callsign are attributed via a
+// learned icao24->carrier map (from callsigned sightings) or registration prefix.
+const learnedCarrier = new Map(); // icao24 -> carrier id
+function isUaeIcao(icao24) {
+  const n = parseInt(String(icao24 || ''), 16);
+  return !Number.isNaN(n) && n >= 0x896000 && n < 0x896800;
+}
+function matchCarrier(icao24, callsign, country) {
+  const c = carrierOf(callsign);
+  if (c) { if (icao24) learnedCarrier.set(String(icao24).toLowerCase(), c.id); return c; }
+  const cs = String(callsign || '').trim();
+  if (/^A6[A-Z0-9]{3}$/i.test(cs) && (country === 'United Arab Emirates' || isUaeIcao(icao24))) {
+    const byIcao = learnedCarrier.get(String(icao24 || '').toLowerCase());
+    if (byIcao) return CARRIERS.find(x => x.id === byIcao) || null;
+    return carrierByReg(cs);
+  }
+  return null;
+}
+function isTracked(icao24, callsign, country) { return !!matchCarrier(icao24, callsign, country); }
+function carrierTag(icao24, callsign, country) {
+  const c = matchCarrier(icao24, callsign, country);
   return c ? { id: c.id, name: c.name, iata: c.iata, color: c.color } : null;
 }
 
@@ -96,7 +114,7 @@ function mapState(s, routesByCallsign) {
   return enrich({
     icao24: s[0],
     callsign,
-    carrier: carrierTag({ callsign }),
+    carrier: carrierTag(s[0], callsign, s[2] || null),
     flightNumber: flightNumber(callsign),
     country: s[2] || null,
     timePosition: s[3] ?? null,
@@ -139,8 +157,8 @@ function mapState(s, routesByCallsign) {
 function demoPayload(nowMs) {
   const nowSec = Math.floor(nowMs / 1000);
   const flights = demoFlights(nowSec)
-    .filter(f => isTracked(f.callsign))
-    .map(f => enrich({ ...f, carrier: carrierTag(f), flightNumber: flightNumber(f.callsign) }));
+    .filter(f => isTracked(f.icao24, f.callsign, f.country))
+    .map(f => enrich({ ...f, carrier: carrierTag(f.icao24, f.callsign, f.country), flightNumber: flightNumber(f.callsign) }));
   flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
   return {
     source: 'demo',
@@ -184,7 +202,7 @@ async function fetchUpstream() {
   } catch { /* route info is best-effort */ }
 
   const flights = (data.states || [])
-    .filter(s => s[1] && isTracked(String(s[1]).trim()))
+    .filter(s => s[1] && isTracked(s[0], String(s[1]).trim(), s[2] || null))
     .map(s => mapState(s, routesByCallsign));
   flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
 
@@ -246,12 +264,12 @@ async function adsbFallbackPayload() {
   const flights = [];
   m.forEach((ac, hex) => {
     const f = adsb.mapAc(ac, nowSec);
-    if (!f.callsign || !isTracked(f.callsign)) return;
+    if (!f.callsign || !isTracked(hex, f.callsign, f.country)) return;
     adsbEnrich.set(hex, ac);
     const r = lastRoutesByCallsign.get(f.callsign);
     flights.push(enrich({
       ...f,
-      carrier: carrierTag(f),
+      carrier: carrierTag(hex, f.callsign, f.country),
       flightNumber: flightNumber(f.callsign),
       departure: r && r.estDepartureAirport ? r.estDepartureAirport : null,
       arrival: r && r.estArrivalAirport ? r.estArrivalAirport : null
@@ -498,7 +516,7 @@ async function routesByCallsignAround(timeSec) {
 function statesPayload(data, updatedAtMs, historical, timeSec) {
   return routesByCallsignAround(timeSec || Math.floor(Date.now() / 1000)).then(async routes => {
     const flights = (data.states || [])
-      .filter(s => s[1] && isTracked(String(s[1]).trim()))
+      .filter(s => s[1] && isTracked(s[0], String(s[1]).trim(), s[2] || null))
       .map(s => mapState(s, routes));
     flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
     return {

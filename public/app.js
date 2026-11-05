@@ -161,7 +161,12 @@
   }
 
   // ATC callsign is e.g. UAE###; the commercial flight number is EK### (per-carrier IATA).
-  function ekOf(f) { return f.flightNumber || (f.callsign ? f.callsign.replace(/^UAE/i, 'EK') : ''); }
+  function ekOf(f) {
+    if (f.flightNumber) return f.flightNumber;
+    var cs = f.callsign || '';
+    if (/^A6[A-Z0-9]{3}$/i.test(cs)) return ''; // registration callsign, not a flight number
+    return cs.replace(/^UAE/i, 'EK');
+  }
 
   function detailRows(f) {
     function row(k, v) { return '<tr><td>' + k + '</td><td>' + v + '</td></tr>'; }
