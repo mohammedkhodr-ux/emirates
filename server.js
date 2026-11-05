@@ -9,6 +9,7 @@ const { scheduleForDate } = require('./lib/schedule');
 const { airportInfo } = require('./lib/airports');
 const { CARRIERS, carrierOf, flightNumber } = require('./lib/carriers');
 const rag = require('./lib/rag');
+const adsb = require('./lib/adsblol');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -33,6 +34,11 @@ let cache = loadCache();
 let lastUpstreamAt = 0;
 let cooldownUntil = 0;
 let inflight = null;
+
+// adsb.lol enrichment (registration, aircraft type, nav/weather…) and fallback
+let adsbEnrich = new Map();   // icao24 -> raw readsb record
+let lastAdsbEnrichAt = 0;
+let lastRoutesByCallsign = new Map();
 
 const HIST_MIN_MS = 10000;
 let lastHistAt = 0;
@@ -88,6 +94,19 @@ function mapState(s, routesByCallsign) {
     category: s[17] ?? null,
     sensors: Array.isArray(s[12]) ? s[12] : null,
     sensorCount: Array.isArray(s[12]) ? s[12].length : null,
+    registration: null,
+    aircraftType: null,
+    aircraftDesc: null,
+    operator: null,
+    iasKn: null,
+    tasKn: null,
+    mach: null,
+    windDir: null,
+    windSpdKn: null,
+    oatC: null,
+    navModes: null,
+    rssi: null,
+    categoryCode: null,
     departure: r && r.estDepartureAirport ? r.estDepartureAirport : null,
     arrival: r && r.estArrivalAirport ? r.estArrivalAirport : null
   });
@@ -145,15 +164,85 @@ async function fetchUpstream() {
     .map(s => mapState(s, routesByCallsign));
   flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
 
+  lastRoutesByCallsign = routesByCallsign;
+  try { await enrichAdsb(flights); } catch { /* enrichment is best-effort */ }
+
   return {
     payload: {
       source: 'live',
+      upstream: 'opensky',
       serverTime: data.time ?? Math.floor(now / 1000),
       updatedAt: now,
       count: flights.length,
       airborne: flights.filter(f => !f.onGround).length,
       flights
     }
+  };
+}
+
+// Refresh registration/type/etc. from adsb.lol at most every 10 min, then
+// merge into the given flights.
+async function enrichAdsb(flights) {
+  const now = Date.now();
+  if (now - lastAdsbEnrichAt > 600000) {
+    lastAdsbEnrichAt = now;
+    const m = await adsb.fetchMany(flights.map(f => f.icao24), 8);
+    m.forEach((ac, hex) => adsbEnrich.set(hex, ac));
+  }
+  const nowSec = Math.floor(now / 1000);
+  for (const f of flights) {
+    const ac = adsbEnrich.get(f.icao24);
+    if (!ac) continue;
+    const e = adsb.mapAc(ac, nowSec);
+    f.registration = e.registration;
+    f.aircraftType = e.aircraftType;
+    f.aircraftDesc = e.aircraftDesc;
+    f.operator = e.operator;
+    f.iasKn = e.iasKn;
+    f.tasKn = e.tasKn;
+    f.mach = e.mach;
+    f.windDir = e.windDir;
+    f.windSpdKn = e.windSpdKn;
+    f.oatC = e.oatC;
+    f.navModes = e.navModes;
+    f.rssi = e.rssi;
+    f.categoryCode = e.categoryCode;
+  }
+}
+
+// Fallback when OpenSky is rate-limited/unreachable: pull the last known
+// tracked aircraft from adsb.lol (keyless, no rate limits) — full readsb
+// fields including registration and type; routes come from the OpenSky cache.
+async function adsbFallbackPayload() {
+  const hexes = new Set(adsbEnrich.keys());
+  if (cache) for (const f of cache.flights) hexes.add(f.icao24);
+  if (!hexes.size) return null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const m = await adsb.fetchMany([...hexes], 10);
+  const flights = [];
+  m.forEach((ac, hex) => {
+    const f = adsb.mapAc(ac, nowSec);
+    if (!f.callsign || !isTracked(f.callsign)) return;
+    adsbEnrich.set(hex, ac);
+    const r = lastRoutesByCallsign.get(f.callsign);
+    flights.push(enrich({
+      ...f,
+      carrier: carrierTag(f),
+      flightNumber: flightNumber(f.callsign),
+      departure: r && r.estDepartureAirport ? r.estDepartureAirport : null,
+      arrival: r && r.estArrivalAirport ? r.estArrivalAirport : null
+    }));
+  });
+  if (!flights.length) return null;
+  flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
+  return {
+    source: 'live',
+    upstream: 'adsb.lol',
+    serverTime: nowSec,
+    updatedAt: Date.now(),
+    count: flights.length,
+    airborne: flights.filter(f => !f.onGround).length,
+    flights
   };
 }
 
@@ -171,19 +260,19 @@ async function getFlights() {
     try {
       const r = await fetchUpstream();
       lastUpstreamAt = now;
-      if (r.cooldownSec) {
-        if (cache) return cachedPayload(cache, r.cooldownSec);
-        return { ...demoPayload(now), retryAfterSec: r.cooldownSec };
-      }
-      if (r.error) {
-        if (cache) return cachedPayload(cache);
-        return demoPayload(now);
+      if (r.cooldownSec || r.error) {
+        const fb = await adsbFallbackPayload().catch(() => null);
+        if (fb) { cache = fb; saveCache(fb); return fb; }
+        if (cache) return cachedPayload(cache, r.cooldownSec || null);
+        return r.cooldownSec ? { ...demoPayload(now), retryAfterSec: r.cooldownSec } : demoPayload(now);
       }
       cache = r.payload;
       saveCache(r.payload);
       return r.payload;
     } catch {
       lastUpstreamAt = now;
+      const fb = await adsbFallbackPayload().catch(() => null);
+      if (fb) { cache = fb; saveCache(fb); return fb; }
       if (cache) return cachedPayload(cache);
       return demoPayload(now);
     } finally {

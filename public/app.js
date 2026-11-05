@@ -124,6 +124,12 @@
       cell('Category', categoryName(f.category)) +
       cell('Receivers', f.sensorCount != null ? String(f.sensorCount) : '—') +
       cell('SPI', f.spi ? 'yes' : 'no') +
+      (f.registration ? cell('Registration', esc(f.registration)) : '') +
+      (f.aircraftType ? cell('Aircraft', esc(f.aircraftType) + (f.aircraftDesc ? ' — ' + esc(f.aircraftDesc) : '')) : '') +
+      (f.iasKn != null || f.tasKn != null ? cell('IAS/TAS', (f.iasKn != null ? fmtInt(Math.round(f.iasKn)) : '—') + ' / ' + (f.tasKn != null ? fmtInt(Math.round(f.tasKn)) + ' kn' : '—')) : '') +
+      (f.mach != null ? cell('Mach', f.mach.toFixed(2)) : '') +
+      (f.windDir != null ? cell('Wind', Math.round(f.windDir) + '°/' + fmtInt(Math.round(f.windSpdKn || 0)) + 'kn') : '') +
+      (f.oatC != null ? cell('OAT', f.oatC + ' °C') : '') +
       cell('Last contact', relTime(f.lastContact) + (f.timePosition ? ' (fix ' + relTime(f.timePosition) + ')' : '')) +
       cell('ICAO24', esc(f.icao24)) +
       '</div></div>';
@@ -173,6 +179,14 @@
       row('Squawk', esc(f.squawk || '—')) +
       row('Receivers', f.sensorCount != null ? String(f.sensorCount) : '—') +
       row('SPI', f.spi ? 'yes' : 'no') +
+      (f.registration ? row('Registration', esc(f.registration)) : '') +
+      (f.aircraftType ? row('Aircraft', esc(f.aircraftType) + (f.aircraftDesc ? ' — ' + esc(f.aircraftDesc) : '')) : '') +
+      (f.iasKn != null ? row('IAS', fmtInt(Math.round(f.iasKn)) + ' kn') : '') +
+      (f.tasKn != null ? row('TAS', fmtInt(Math.round(f.tasKn)) + ' kn') : '') +
+      (f.mach != null ? row('Mach', f.mach.toFixed(2)) : '') +
+      (f.windDir != null ? row('Wind', Math.round(f.windDir) + '° / ' + fmtInt(Math.round(f.windSpdKn || 0)) + ' kn') : '') +
+      (f.oatC != null ? row('OAT', f.oatC + ' °C') : '') +
+      (f.navModes && f.navModes.length ? row('Nav modes', esc(f.navModes.join(', '))) : '') +
       row('ICAO24', esc(f.icao24));
   }
 
@@ -539,6 +553,7 @@
     b.className = 'badge ' + pair[1];
     var note = $('badge-note');
     if (p.note) note.textContent = p.note;
+    else if (p.source === 'live' && p.upstream) note.textContent = 'live via ' + p.upstream;
     else if (p.source === 'cached' && p.dataAgeSec != null) note.textContent = 'rate-limited · data ' + p.dataAgeSec + 's old';
     else if (p.retryAfterSec) note.textContent = 'rate limited, retry in ' + p.retryAfterSec + 's';
     else if (p.source === 'demo') note.textContent = 'simulated data (set DEMO=0 for live)';
