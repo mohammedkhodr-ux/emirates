@@ -190,6 +190,31 @@ The platform builds the Docker image (Node 22, binds `0.0.0.0:$PORT`), runs
 raise the OpenSky rate limit. `HOST` stays `127.0.0.1` for local runs and is
 overridden to `0.0.0.0` inside the container.
 
+## Data sources (no rate limits)
+
+Primary: **OpenSky Network** (`/states/all` + `/flights/*`) — positions and
+departure/arrival airports. Anonymous quota is 400 credits/day (a global
+sweep costs 4), so the server caches and honors `Retry-After`.
+
+Fallback + enrichment: **adsb.lol** (`api.adsb.lol/v2/hex/{icao24}`) — keyless
+community ADS-B API with **no rate limits** for personal use. When OpenSky is
+rate-limited/unreachable, the last known tracked aircraft are pulled live from
+adsb.lol instead (badge shows `live via adsb.lol`); and every ~10 min the
+tracked fleet is enriched from adsb.lol with fields OpenSky lacks:
+**registration, aircraft type/description, operator, IAS/TAS/Mach, wind, OAT,
+nav modes, RSSI** — all shown in the hover tooltip and click popup.
+
+Other keyless options if you build on this further: adsb.fi open data
+(ADS-B Exchange-compatible), avioadsb.org, and OpenSky's downloadable
+aircraft-database CSV. Commercial schedule/status APIs (AviationStack,
+AeroDataBox) need keys and have strict free-tier limits; airplanes.live
+requires contacting them. Historical bulk data: adsb.lol/adsb.fi publish
+daily tarballs; OpenSky history beyond 1 h needs Trino access.
+
+Complete flight data programmatically: `GET /api/flights` (every field per
+flight, JSON), `GET /api/track?icao24=…` (flown path), the Reports tab
+(downloadable Markdown), or hover/click any plane in the UI.
+
 ## Data attribution
 
 - Aircraft data: [The OpenSky Network](https://opensky-network.org) (CC BY-SA 4.0
