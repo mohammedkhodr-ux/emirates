@@ -541,6 +541,18 @@
     if (row) row.scrollIntoView({ block: 'nearest' });
   }
 
+  function metaNote(p) {
+    if (!p.meta) return '';
+    var parts = [];
+    var noFix = p.meta.total - p.meta.withPosition;
+    var noRoute = p.meta.total - p.meta.withRoute;
+    var noReg = p.meta.total - p.meta.withRegistration;
+    if (noFix > 0) parts.push(noFix + ' no-fix');
+    if (noRoute > 0) parts.push(noRoute + ' no-route');
+    if (noReg > 0) parts.push(noReg + ' no-reg');
+    return parts.length ? ' · ' + parts.join(' · ') : '';
+  }
+
   function setBadge(p) {
     var b = $('badge');
     var map = {
@@ -553,8 +565,8 @@
     b.className = 'badge ' + pair[1];
     var note = $('badge-note');
     if (p.note) note.textContent = p.note;
-    else if (p.source === 'live' && p.upstream) note.textContent = 'live via ' + p.upstream;
-    else if (p.source === 'cached' && p.dataAgeSec != null) note.textContent = 'rate-limited · data ' + p.dataAgeSec + 's old';
+    else if (p.source === 'live' && p.upstream) note.textContent = 'live via ' + p.upstream + metaNote(p);
+    else if (p.source === 'cached' && p.dataAgeSec != null) note.textContent = 'rate-limited · data ' + p.dataAgeSec + 's old' + metaNote(p);
     else if (p.retryAfterSec) note.textContent = 'rate limited, retry in ' + p.retryAfterSec + 's';
     else if (p.source === 'demo') note.textContent = 'simulated data (set DEMO=0 for live)';
     else note.textContent = '';

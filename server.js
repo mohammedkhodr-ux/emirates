@@ -40,6 +40,30 @@ let adsbEnrich = new Map();   // icao24 -> raw readsb record
 let lastAdsbEnrichAt = 0;
 let lastRoutesByCallsign = new Map();
 
+// Seed route info from the disk cache so the adsb.lol fallback keeps dep/arr
+// across restarts.
+if (cache) {
+  for (const f of cache.flights || []) {
+    if (f.callsign && (f.departure || f.arrival)) {
+      lastRoutesByCallsign.set(f.callsign, { estDepartureAirport: f.departure || null, estArrivalAirport: f.arrival || null });
+    }
+  }
+}
+
+// Completeness stats so gaps are visible instead of silent.
+function withMeta(payload) {
+  const flights = payload.flights || [];
+  payload.meta = {
+    total: flights.length,
+    airborne: flights.filter(f => !f.onGround).length,
+    withPosition: flights.filter(f => f.lat != null && f.lon != null).length,
+    withRoute: flights.filter(f => f.departure && f.arrival).length,
+    withRegistration: flights.filter(f => f.registration).length,
+    withType: flights.filter(f => f.aircraftType).length
+  };
+  return payload;
+}
+
 const HIST_MIN_MS = 10000;
 let lastHistAt = 0;
 const histCache = new Map();
@@ -555,7 +579,7 @@ const server = http.createServer(async (req, res) => {
         ? await getFlightsAt(timeSec)
         : await getFlights();
       try { rag.ingestPayload(result, timeSec ? 'history' : 'live'); } catch { /* index is best-effort */ }
-      sendJson(res, 200, result);
+      sendJson(res, 200, withMeta(result));
     } catch (e) {
       sendJson(res, 500, { error: String((e && e.message) || e) });
     }

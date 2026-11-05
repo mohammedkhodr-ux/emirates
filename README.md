@@ -161,6 +161,12 @@ popup): icao24, callsign, carrier, flight number, country, position, fix time,
 last contact, baro + geo altitude, on-ground, ground speed, true track,
 vertical rate, sensors/receivers, squawk, SPI, position source, aircraft
 category, plus estimated departure/arrival airports from `/flights/*`.
+Each `/api/flights` response carries a `meta` block (total / airborne /
+withPosition / withRoute / withRegistration / withType) and the badge shows
+gaps (`N no-fix · N no-route · N no-reg`) so incomplete data is visible, not
+silent. Note: OpenSky history via REST only reaches 1 h back — older
+historical replays are clearly labeled simulated; adsb.lol/adsb.fi daily
+tarballs are the keyless way to get older history.
 
 ## RAG chat agent
 
