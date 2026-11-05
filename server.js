@@ -54,6 +54,47 @@ let inflight = null;
 let adsbEnrich = new Map();   // icao24 -> raw readsb record
 let lastAdsbEnrichAt = 0;
 let lastRoutesByCallsign = new Map();
+const gridFound = new Map();   // icao24 -> mapped flight discovered by the sweeper
+
+// Background sweeper: walks a coarse global grid on adsb.lol at a gentle pace
+// (it rate-limits bursts), discovering tracked-carrier aircraft the primary
+// source misses. Runs forever, one point at a time.
+const GRID_PTS = [];
+for (let lat = -60; lat <= 80; lat += 20) for (let lon = -180; lon < 180; lon += 20) GRID_PTS.push([lat, lon]);
+let gridIdx = Math.max(0, GRID_PTS.findIndex(([la, lo]) => la === 20 && lo === 40)); // start over the Gulf
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function gridSweeper() {
+  while (true) {
+    const [lat, lon] = GRID_PTS[gridIdx++ % GRID_PTS.length];
+    try {
+      const acs = await adsb.fetchPoint(lat, lon, 1100);
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const ac of acs) {
+        const hex = String(ac.hex || '').toLowerCase();
+        if (!hex) continue;
+        adsbEnrich.set(hex, ac);
+        if (!gridFound.has(hex)) {
+          const f = adsb.mapAc(ac, nowSec);
+          if (f.callsign && isTracked(hex, f.callsign, f.country)) gridFound.set(hex, f);
+        }
+      }
+      await sleep(1100);
+    } catch {
+      await sleep(2500); // rate-limited or error: back off
+    }
+  }
+}
+
+function adsbFlightToTracked(f, hex) {
+  const r = lastRoutesByCallsign.get(f.callsign);
+  return enrich({
+    ...f,
+    carrier: carrierTag(hex, f.callsign, f.country),
+    flightNumber: flightNumber(f.callsign),
+    departure: r && r.estDepartureAirport ? r.estDepartureAirport : null,
+    arrival: r && r.estArrivalAirport ? r.estArrivalAirport : null
+  });
+}
 
 // Seed route info from the disk cache so the adsb.lol fallback keeps dep/arr
 // across restarts.
@@ -204,12 +245,26 @@ async function fetchUpstream() {
   flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
 
   lastRoutesByCallsign = routesByCallsign;
-  try { await enrichAdsb(flights); } catch { /* enrichment is best-effort */ }
+  let enriched = 0;
+  try { enriched = await enrichAdsb(flights); } catch { /* enrichment is best-effort */ }
+
+  // Merge aircraft discovered by the background adsb.lol sweeper (coverage
+  // the primary source misses).
+  let gridAdded = 0;
+  const have = new Set(flights.map(f => f.icao24));
+  for (const [hex, f] of gridFound) {
+    if (have.has(hex)) continue;
+    flights.push(adsbFlightToTracked(f, hex));
+    gridAdded++;
+  }
+  if (gridAdded) flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
 
   return {
     payload: {
       source: 'live',
-      upstream: 'opensky',
+      upstream: (enriched > 0 || gridAdded > 0) ? 'opensky+adsb.lol' : 'opensky',
+      enriched,
+      gridAdded,
       serverTime: data.time ?? Math.floor(now / 1000),
       updatedAt: now,
       count: flights.length,
@@ -219,20 +274,31 @@ async function fetchUpstream() {
   };
 }
 
-// Refresh registration/type/etc. from adsb.lol at most every 10 min, then
-// merge into the given flights.
+// Refresh adsb.lol records at most every 30 s, then merge into the flights:
+// registration/type/nav/weather always; position/speed/alt only when the
+// adsb.lol fix is fresher than the primary source's.
 async function enrichAdsb(flights) {
   const now = Date.now();
-  if (now - lastAdsbEnrichAt > 600000) {
+  if (now - lastAdsbEnrichAt > 30000) {
     lastAdsbEnrichAt = now;
-    const m = await adsb.fetchMany(flights.map(f => f.icao24), 8);
-    m.forEach((ac, hex) => adsbEnrich.set(hex, ac));
+    try {
+      const m = await Promise.race([
+        adsb.fetchMany(flights.map(f => f.icao24), 10),
+        new Promise(r => setTimeout(r, 9000))
+      ]);
+      if (m instanceof Map) m.forEach((ac, hex) => adsbEnrich.set(hex, ac));
+    } catch { /* keep old cache */ }
   }
-  const nowSec = Math.floor(now / 1000);
+  return mergeAdsb(flights, Math.floor(now / 1000));
+}
+
+function mergeAdsb(flights, nowSec) {
+  let enriched = 0;
   for (const f of flights) {
     const ac = adsbEnrich.get(f.icao24);
     if (!ac) continue;
     const e = adsb.mapAc(ac, nowSec);
+    enriched++;
     f.registration = e.registration;
     f.aircraftType = e.aircraftType;
     f.aircraftDesc = e.aircraftDesc;
@@ -246,43 +312,62 @@ async function enrichAdsb(flights) {
     f.navModes = e.navModes;
     f.rssi = e.rssi;
     f.categoryCode = e.categoryCode;
+    if (e.squawk) f.squawk = e.squawk;
+    if (e.lat != null && (f.timePosition == null || e.timePosition == null || e.timePosition >= f.timePosition)) {
+      f.lat = e.lat; f.lon = e.lon; f.timePosition = e.timePosition;
+      if (e.track != null) f.track = e.track;
+      if (e.speedKn != null) { f.speedKn = e.speedKn; f.speedMs = e.speedMs; }
+      if (e.altitudeFt != null) { f.altitudeFt = e.altitudeFt; f.altitudeM = e.altitudeM; }
+      f.onGround = e.onGround;
+      if (e.verticalRateFpm != null) { f.verticalRateFpm = e.verticalRateFpm; f.verticalRateMps = e.verticalRateMps; }
+      if (e.geoAltitudeM != null) f.geoAltitudeM = e.geoAltitudeM;
+    }
+    if (e.lastContact != null && (f.lastContact == null || e.lastContact >= f.lastContact)) f.lastContact = e.lastContact;
   }
+  return enriched;
 }
 
 // Fallback when OpenSky is rate-limited/unreachable: pull the last known
 // tracked aircraft from adsb.lol (keyless, no rate limits) — full readsb
 // fields including registration and type; routes come from the OpenSky cache.
 async function adsbFallbackPayload() {
+  const nowSec = Math.floor(Date.now() / 1000);
+  // 1) aircraft discovered by the background sweeper (global adsb.lol coverage)
+  if (gridFound.size) {
+    const flights = [];
+    for (const [hex, f] of gridFound) flights.push(adsbFlightToTracked(f, hex));
+    flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
+    return {
+      source: 'live', upstream: 'adsb.lol(grid)', serverTime: nowSec, updatedAt: Date.now(),
+      count: flights.length, airborne: flights.filter(f => !f.onGround).length, flights
+    };
+  }
+  // 2) last-known hexes, per keyless provider in turn (adsb.lol, then adsb.fi)
   const hexes = new Set(adsbEnrich.keys());
   if (cache) for (const f of cache.flights) hexes.add(f.icao24);
   if (!hexes.size) return null;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const m = await adsb.fetchMany([...hexes], 10);
-  const flights = [];
-  m.forEach((ac, hex) => {
-    const f = adsb.mapAc(ac, nowSec);
-    if (!f.callsign || !isTracked(hex, f.callsign, f.country)) return;
-    adsbEnrich.set(hex, ac);
-    const r = lastRoutesByCallsign.get(f.callsign);
-    flights.push(enrich({
-      ...f,
-      carrier: carrierTag(hex, f.callsign, f.country),
-      flightNumber: flightNumber(f.callsign),
-      departure: r && r.estDepartureAirport ? r.estDepartureAirport : null,
-      arrival: r && r.estArrivalAirport ? r.estArrivalAirport : null
-    }));
-  });
-  if (!flights.length) return null;
-  flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
-  return {
-    source: 'live',
-    upstream: 'adsb.lol',
-    serverTime: nowSec,
-    updatedAt: Date.now(),
-    count: flights.length,
-    airborne: flights.filter(f => !f.onGround).length,
-    flights
-  };
+  for (const base of adsb.FALLBACK_BASES) {
+    const name = base.includes('adsb.lol') ? 'adsb.lol' : 'adsb.fi';
+    let m;
+    try {
+      m = await Promise.race([adsb.fetchMany([...hexes], 10, base), new Promise(r => setTimeout(r, 12000))]);
+    } catch { continue; }
+    if (!(m instanceof Map) || !m.size) continue;
+    const flights = [];
+    m.forEach((ac, hex) => {
+      const f = adsb.mapAc(ac, nowSec);
+      if (!f.callsign || !isTracked(hex, f.callsign, f.country)) return;
+      adsbEnrich.set(hex, ac);
+      flights.push(adsbFlightToTracked(f, hex));
+    });
+    if (!flights.length) continue;
+    flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
+    return {
+      source: 'live', upstream: name, serverTime: nowSec, updatedAt: Date.now(),
+      count: flights.length, airborne: flights.filter(f => !f.onGround).length, flights
+    };
+  }
+  return null;
 }
 
 async function getFlights() {
@@ -652,4 +737,5 @@ try {
 
 server.listen(PORT, HOST, () => {
   console.log(`Middle East flight tracker running at http://${HOST}:${PORT}  (demo=${DEMO}, min upstream interval=${MIN_UPSTREAM_MS / 1000}s, rag chunks=${rag.stats().chunks})`);
+  if (!DEMO) gridSweeper().catch(() => {}); // background global discovery via adsb.lol
 });

@@ -212,7 +212,13 @@ Primary: **OpenSky Network** (`/states/all` + `/flights/*`) — positions and
 departure/arrival airports. Anonymous quota is 400 credits/day (a global
 sweep costs 4), so the server caches and honors `Retry-After`.
 
-Fallback + enrichment: **adsb.lol** (`api.adsb.lol/v2/hex/{icao24}`) — keyless
+Fallback + enrichment: **adsb.lol** (`api.adsb.lol/v2/...`) — keyless. A
+background sweeper walks a coarse global point grid on adsb.lol at a gentle
+pace (the API rate-limits bursts), discovering tracked aircraft that OpenSky
+misses entirely and merging them into every payload (badge:
+`live via opensky+adsb.lol`); if OpenSky is rate-limited/down, the app falls
+back to the sweeper's global picture, then per-hex lookups on adsb.lol and
+adsb.fi, then the disk cache, then demo. Keyless
 community ADS-B API with **no rate limits** for personal use. When OpenSky is
 rate-limited/unreachable, the last known tracked aircraft are pulled live from
 adsb.lol instead (badge shows `live via adsb.lol`); and every ~10 min the
