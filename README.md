@@ -154,6 +154,26 @@ public/vendor/          vendored Leaflet 1.9.4 + MarkerCluster 1.5.3 + world cou
 - `GET /api/schedule?date=YYYY-MM-DD` → typical daily schedule (drives the line chart)
 - `GET /api/health` → server status
 
+## Data completeness
+
+Every OpenSky state-vector field is collected and shown (hover tooltip / click
+popup): icao24, callsign, carrier, flight number, country, position, fix time,
+last contact, baro + geo altitude, on-ground, ground speed, true track,
+vertical rate, sensors/receivers, squawk, SPI, position source, aircraft
+category, plus estimated departure/arrival airports from `/flights/*`.
+
+## RAG chat agent
+
+`lib/rag.js` is an in-memory retrieval index behind `POST /api/chat`: every
+`/api/flights` response (live **and** historical replays) is chunked per
+flight and embedded (Mistral `mistral-embed` via the app's service-account
+token or `MISTRAL_API_KEY`); the disk cache and the daily schedule are seeded
+at startup. At chat time the user question is embedded and the top-8 chunks
+are retrieved (cosine; keyword fallback when no embedding credentials) and
+injected into the system prompt, so answers are grounded in the indexed
+active + historical data. `GET /api/chat` reports credential sources and
+index size; the chat panel shows both.
+
 ## Deploy to Mistral Apps (Vibe catalog)
 
 The repo carries an `apps.json` manifest and `deploy/docker/Dockerfile`, so it

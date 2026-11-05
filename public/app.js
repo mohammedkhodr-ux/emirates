@@ -122,6 +122,8 @@
       cell('Squawk', esc(f.squawk || '—')) +
       cell('Pos source', posSourceName(f.positionSource)) +
       cell('Category', categoryName(f.category)) +
+      cell('Receivers', f.sensorCount != null ? String(f.sensorCount) : '—') +
+      cell('SPI', f.spi ? 'yes' : 'no') +
       cell('Last contact', relTime(f.lastContact) + (f.timePosition ? ' (fix ' + relTime(f.timePosition) + ')' : '')) +
       cell('ICAO24', esc(f.icao24)) +
       '</div></div>';
@@ -169,6 +171,8 @@
       row('Aircraft category', categoryName(f.category)) +
       row('Last contact', relTime(f.lastContact) + (f.timePosition ? ' · fix ' + relTime(f.timePosition) : '')) +
       row('Squawk', esc(f.squawk || '—')) +
+      row('Receivers', f.sensorCount != null ? String(f.sensorCount) : '—') +
+      row('SPI', f.spi ? 'yes' : 'no') +
       row('ICAO24', esc(f.icao24));
   }
 
@@ -755,7 +759,7 @@
       var r = await fetch('/api/chat', { cache: 'no-store' });
       var j = await r.json();
       el.textContent = j.ok
-        ? 'model access: ' + (j.sources || []).join(' + ')
+        ? 'model access: ' + (j.sources || []).join(' + ') + (j.index ? ' · RAG index: ' + j.index.chunks + ' chunks (' + j.index.embedded + ' embedded)' : '')
         : 'no model credentials — open via the app gateway or set MISTRAL_API_KEY';
       el.classList.toggle('warn', !j.ok);
     } catch (e) {

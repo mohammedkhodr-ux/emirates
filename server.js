@@ -8,6 +8,7 @@ const { demoFlights, demoTrack } = require('./lib/demo');
 const { scheduleForDate } = require('./lib/schedule');
 const { airportInfo } = require('./lib/airports');
 const { CARRIERS, carrierOf, flightNumber } = require('./lib/carriers');
+const rag = require('./lib/rag');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -85,6 +86,8 @@ function mapState(s, routesByCallsign) {
     spi: !!s[15],
     positionSource: s[16] ?? null,
     category: s[17] ?? null,
+    sensors: Array.isArray(s[12]) ? s[12] : null,
+    sensorCount: Array.isArray(s[12]) ? s[12].length : null,
     departure: r && r.estDepartureAirport ? r.estDepartureAirport : null,
     arrival: r && r.estArrivalAirport ? r.estArrivalAirport : null
   });
@@ -281,21 +284,39 @@ async function handleChat(req, res) {
       return;
     }
     const nowSec = Math.floor(Date.now() / 1000);
+    const model = process.env.CHAT_MODEL || 'mistral-small-latest';
+    const candidates = chatCredentialCandidates(req);
+    if (!candidates.length) {
+      sendJson(res, 503, { error: 'no model credentials available (open the app via its gateway URL, or set MISTRAL_API_KEY on the app)', debug: chatDebug(req), index: rag.stats() });
+      return;
+    }
+    // RAG: retrieve the most relevant indexed chunks (active + historical
+    // flight data, schedules) for the user's question and ground the answer
+    // in them.
+    const lastUser = messages[messages.length - 1].content || '';
+    const qCred = candidates[0] || null;
+    let qVec = null;
+    if (qCred) {
+      const v = await rag.embedTexts([lastUser], { token: qCred.token, base: qCred.base });
+      if (v) qVec = v[0];
+    }
+    const top = rag.retrieve(lastUser, 8, qVec);
+    const idx = rag.stats();
     const flights = (cache && cache.flights) || demoPayload(Date.now()).flights;
+    const carrierCounts = {};
+    flights.forEach(f => { const n = (f.carrier && f.carrier.name) || 'unknown'; carrierCounts[n] = (carrierCounts[n] || 0) + 1; });
+    const snapshotLine = `snapshot UTC ${new Date(nowSec * 1000).toISOString()}: ${flights.length} tracked flights (${flights.filter(f => !f.onGround).length} airborne) — ` +
+      Object.entries(carrierCounts).map(([k, v]) => `${k}: ${v}`).join(', ');
     const sys = {
       role: 'system',
       content: 'You are a concise flight-data assistant for a live Middle East airline tracker ' +
         '(Emirates, flydubai, Air Arabia, Qatar Airways, Saudia, Nas Air, Etihad). ' +
-        'Answer questions about the flights using ONLY the snapshot below. ' +
-        'Snapshot (UTC ' + new Date(nowSec * 1000).toISOString() + '):\n' +
-        (flightsContext(flights, nowSec) || '(no flights in snapshot)')
+        'A retrieval index over ACTIVE and HISTORICAL flight data (every snapshot the tracker collected, plus schedules) is provided below. ' +
+        'Answer using ONLY the RETRIEVED CONTEXT, cite flights by callsign (e.g. UAE201 / EK201), and say when the context lacks the answer.\n\n' +
+        snapshotLine + '\n\n' +
+        'RETRIEVED CONTEXT (top ' + top.length + ' of ' + idx.chunks + ' indexed chunks, ' + idx.embedded + ' embedded):\n' +
+        (top.map(c => c.text).join('\n') || '(index empty)')
     };
-    const model = process.env.CHAT_MODEL || 'mistral-small-latest';
-    const candidates = chatCredentialCandidates(req);
-    if (!candidates.length) {
-      sendJson(res, 503, { error: 'no model credentials available (open the app via its gateway URL, or set MISTRAL_API_KEY on the app)', debug: chatDebug(req) });
-      return;
-    }
     let lastErr = 'unknown', lastStatus = 0;
     for (const c of candidates) {
       let r;
@@ -313,7 +334,7 @@ async function handleChat(req, res) {
       if (r.ok) {
         const j = await r.json();
         const reply = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-        sendJson(res, 200, { reply, via: c.via });
+        sendJson(res, 200, { reply, via: c.via, retrieved: top.length, index: idx });
         return;
       }
       const t = await r.text().catch(() => '');
@@ -321,7 +342,11 @@ async function handleChat(req, res) {
       lastErr = 'HTTP ' + r.status + ': ' + t.slice(0, 300);
       if (r.status !== 401 && r.status !== 403) break; // real API error, not an auth one
     }
-    sendJson(res, 502, { error: 'model API failed: ' + lastErr, debug: { ...chatDebug(req), lastStatus } });
+    sendJson(res, 502, {
+      error: 'model API failed: ' + lastErr,
+      debug: { ...chatDebug(req), lastStatus },
+      rag: { retrieved: top.length, index: idx, preview: top.length ? top[0].text.slice(0, 200) : null }
+    });
   } catch (e) {
     sendJson(res, 500, { error: String((e && e.message) || e) });
   }
@@ -437,11 +462,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const timeParam = u.searchParams.get('time');
       const timeSec = timeParam && /^\d+$/.test(timeParam) ? Number(timeParam) : null;
-      if (timeSec && timeSec < Math.floor(Date.now() / 1000) - 60) {
-        sendJson(res, 200, await getFlightsAt(timeSec));
-      } else {
-        sendJson(res, 200, await getFlights());
-      }
+      const result = timeSec && timeSec < Math.floor(Date.now() / 1000) - 60
+        ? await getFlightsAt(timeSec)
+        : await getFlights();
+      try { rag.ingestPayload(result, timeSec ? 'history' : 'live'); } catch { /* index is best-effort */ }
+      sendJson(res, 200, result);
     } catch (e) {
       sendJson(res, 500, { error: String((e && e.message) || e) });
     }
@@ -472,7 +497,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/api/chat' && req.method === 'GET') {
     const c = chatCredentialCandidates(req);
-    sendJson(res, 200, { ok: c.length > 0, sources: c.map(x => x.via), debug: chatDebug(req) });
+    sendJson(res, 200, { ok: c.length > 0, sources: c.map(x => x.via), debug: chatDebug(req), index: rag.stats() });
     return;
   }
   if (p === '/api/chat' && req.method === 'POST') {
@@ -486,6 +511,17 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res, p);
 });
 
+// Seed the RAG index with the disk cache and today's schedule.
+try {
+  if (cache) rag.ingestPayload(cache, 'cache');
+  const sched = scheduleForDate(new Date().toISOString().slice(0, 10));
+  if (sched && sched.flights) {
+    for (const f of sched.flights) {
+      rag.ingestText('schedule', `scheduled flight ${f.callsign}/${f.flight} ${f.departure} -> ${f.arrival}, dep ${new Date(f.depSec * 1000).toISOString()}, arr ${new Date(f.arrSec * 1000).toISOString()}, duration ${f.durationMin} min, date ${sched.date}`);
+    }
+  }
+} catch { /* index seeding is best-effort */ }
+
 server.listen(PORT, HOST, () => {
-  console.log(`Middle East flight tracker running at http://${HOST}:${PORT}  (demo=${DEMO}, min upstream interval=${MIN_UPSTREAM_MS / 1000}s)`);
+  console.log(`Middle East flight tracker running at http://${HOST}:${PORT}  (demo=${DEMO}, min upstream interval=${MIN_UPSTREAM_MS / 1000}s, rag chunks=${rag.stats().chunks})`);
 });
