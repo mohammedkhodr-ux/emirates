@@ -54,7 +54,7 @@ let inflight = null;
 let adsbEnrich = new Map();   // icao24 -> raw readsb record
 let lastAdsbEnrichAt = 0;
 let lastRoutesByCallsign = new Map();
-const gridFound = new Map();   // icao24 -> mapped flight discovered by the sweeper
+const gridFound = new Map();   // icao24 -> { f, seenAt } discovered by the sweeper; stale entries pruned
 
 // Background sweeper: walks a coarse global grid on adsb.lol at a gentle pace
 // (it rate-limits bursts), discovering tracked-carrier aircraft the primary
@@ -73,11 +73,11 @@ async function gridSweeper() {
         const hex = String(ac.hex || '').toLowerCase();
         if (!hex) continue;
         adsbEnrich.set(hex, ac);
-        if (!gridFound.has(hex)) {
-          const f = adsb.mapAc(ac, nowSec);
-          if (f.callsign && isTracked(hex, f.callsign, f.country)) gridFound.set(hex, f);
-        }
+        const f = adsb.mapAc(ac, nowSec);
+        if (f.callsign && isTracked(hex, f.callsign, f.country)) gridFound.set(hex, { f, seenAt: nowSec });
       }
+      // prune aircraft no longer visible (landed / out of coverage) so counts stay accurate
+      for (const [hex, e] of gridFound) if (nowSec - e.seenAt > 150) gridFound.delete(hex);
       await sleep(1100);
     } catch {
       await sleep(2500); // rate-limited or error: back off
@@ -252,9 +252,9 @@ async function fetchUpstream() {
   // the primary source misses).
   let gridAdded = 0;
   const have = new Set(flights.map(f => f.icao24));
-  for (const [hex, f] of gridFound) {
+  for (const [hex, e] of gridFound) {
     if (have.has(hex)) continue;
-    flights.push(adsbFlightToTracked(f, hex));
+    flights.push(adsbFlightToTracked(e.f, hex));
     gridAdded++;
   }
   if (gridAdded) flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
@@ -335,7 +335,7 @@ async function adsbFallbackPayload() {
   // 1) aircraft discovered by the background sweeper (global adsb.lol coverage)
   if (gridFound.size) {
     const flights = [];
-    for (const [hex, f] of gridFound) flights.push(adsbFlightToTracked(f, hex));
+    for (const [hex, e] of gridFound) flights.push(adsbFlightToTracked(e.f, hex));
     flights.sort((a, b) => a.callsign.localeCompare(b.callsign));
     return {
       source: 'live', upstream: 'adsb.lol(grid)', serverTime: nowSec, updatedAt: Date.now(),
