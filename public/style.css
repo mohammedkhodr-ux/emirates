@@ -285,9 +285,9 @@ body {
 #chat-input:focus { border-color: var(--red); }
 #chat-send { background: var(--red); color: #fff; border: none; border-radius: 8px; padding: 0 12px; cursor: pointer; }
 
-.plane-tip { background: var(--panel) !important; color: var(--text) !important; border: 1px solid var(--border) !important; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.55); white-space: normal !important; max-width: 360px; }
-.tip { font-size: 12px; line-height: 1.5; min-width: 190px; }
-.tip-head .cs { font-weight: 800; font-size: 14px; }
+.plane-tip { background: var(--panel) !important; color: var(--text) !important; border: 1px solid var(--red) !important; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.7); white-space: normal !important; max-width: 420px; padding: 4px 6px; }
+.tip { font-size: 12.5px; line-height: 1.55; min-width: 230px; }
+.tip-head .cs { font-weight: 800; font-size: 15px; }
 .tip-head .ek { color: var(--gold); font-weight: 700; margin-left: 5px; font-size: 12px; }
 .tip-carrier { color: var(--muted); margin-left: 7px; font-size: 11px; }
 .tip-route { color: var(--text); font-size: 12px; margin: 2px 0 6px; }
