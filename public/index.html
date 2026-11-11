@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Middle East Airlines Tracker — Live &amp; Historical</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23d71920' d='M21,16v-2l-8-5V3.5C13,2.67,12.33,2,11.5,2S10,2.67,10,3.5V9l-8,5v2l8-2.5V19l-2,1.5V22l3.5-1l3.5,1v-1.5L13,19v-5.5L21,16z'/></svg>">
+<link rel="stylesheet" href="/vendor/leaflet.css">
+<link rel="stylesheet" href="/vendor/MarkerCluster.css">
+<link rel="stylesheet" href="/vendor/MarkerCluster.Default.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="sidebar">
+  <div class="brand">
+    <span class="brand-icon">✈</span>
+    <div>
+      <h1>Middle East Airlines Tracker</h1>
+      <p>Emirates · flydubai · Air Arabia · Qatar Airways · Saudia · Nas Air · Etihad</p>
+    </div>
+  </div>
+  <div class="seg">
+    <button id="mode-live" class="active">Live</button>
+    <button id="mode-hist">Historical</button>
+  </div>
+  <div id="hist-panel" class="hidden">
+    <div class="hist-row">
+      <input type="date" id="hist-date">
+      <button id="play-btn" title="Play / pause replay">▶</button>
+      <span id="hist-time" class="mono">00:00 UTC</span>
+    </div>
+    <input type="range" id="time-slider" min="0" max="1439" value="0" title="Time of day (UTC)">
+  </div>
+  <div class="zoom-row">
+    <select id="continent" title="Zoom to continent">
+      <option value="world">World</option>
+      <option value="africa">Africa</option>
+      <option value="europe">Europe</option>
+      <option value="asia">Asia</option>
+      <option value="mideast">Middle East</option>
+      <option value="namerica">North America</option>
+      <option value="samerica">South America</option>
+      <option value="oceania">Oceania</option>
+    </select>
+    <input id="country-search" list="countries-list" placeholder="Zoom to country…" autocomplete="off">
+    <datalist id="countries-list"></datalist>
+    <select id="view-format" title="Map or line format">
+      <option value="both">Map + lines</option>
+      <option value="markers">Map only</option>
+      <option value="lines">Lines only</option>
+    </select>
+  </div>
+  <div id="legend"></div>
+  <div class="filter-row">
+    <select id="status-filter" title="Filter flights by status">
+      <option value="all">All flights (air + ground)</option>
+      <option value="airborne">✈ In the air</option>
+      <option value="ground">🛬 On the ground</option>
+    </select>
+  </div>
+  <div class="stats">
+    <div class="stat"><span class="stat-num" id="stat-count">–</span><span class="stat-label">airborne</span></div>
+    <div class="stat"><span class="stat-num" id="stat-total">–</span><span class="stat-label">total</span></div>
+    <div class="stat grow"><span class="badge b-live" id="badge">LIVE</span><span class="badge-note" id="badge-note"></span></div>
+  </div>
+  <div class="meta-row">
+    <span id="stat-updated">—</span>
+    <span class="meta-right"><label class="chk" title="Draw a trail behind each plane"><input type="checkbox" id="trails" checked> trails</label><label class="chk" title="Keep the map centered on the selected plane"><input type="checkbox" id="follow"> follow</label><span id="stat-next"></span><button id="refresh-btn" title="Refresh now">⟳ Refresh</button></span>
+  </div>
+  <div class="tabs">
+    <button id="tab-flights" class="active">Flights</button>
+    <button id="tab-analytics">Analytics</button>
+    <button id="tab-reports">Reports</button>
+  </div>
+  <div id="pane-flights">
+    <input id="search" type="search" placeholder="Search flight, route, city… (e.g. UAE201 / EK201, LHR)" autocomplete="off">
+    <div class="list-head"><span>Flight</span><span><span id="stat-shown">0</span> shown</span></div>
+    <div id="flight-list"></div>
+  </div>
+  <div id="pane-analytics" class="hidden"></div>
+  <div id="pane-reports" class="hidden">
+    <div class="report-actions">
+      <button id="report-download">⬇ Download .md</button>
+      <button id="report-copy">⧉ Copy</button>
+    </div>
+    <pre id="report-text"></pre>
+  </div>
+  <div class="foot">
+    Data: <a href="https://opensky-network.org">OpenSky Network</a> · Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors / <a href="https://carto.com/">CARTO</a><br>
+    Unofficial project — not affiliated with Emirates
+  </div>
+</div>
+<div id="map-area">
+  <div id="map"></div>
+  <div id="chartbar">
+    <canvas id="chart"></canvas>
+    <div id="chart-label">typical daily schedule — click to scrub time</div>
+  </div>
+  <button id="chat-toggle" title="Ask the flight assistant">💬</button>
+  <div id="chat-panel" class="hidden">
+    <div class="chat-head"><span>✈ Flight assistant</span><button id="chat-close" title="Close">✕</button></div>
+    <div id="chat-status">checking…</div>
+    <div id="chat-log"></div>
+    <div class="chat-quick">
+      <button data-q="Which flight is currently the highest?">Highest</button>
+      <button data-q="List all flights heading to London Heathrow (LHR).">To LHR</button>
+      <button data-q="Which flight is the fastest right now?">Fastest</button>
+    </div>
+    <div class="chat-input-row">
+      <input id="chat-input" placeholder="Ask about any flight… (e.g. where is EK201?)" autocomplete="off">
+      <button id="chat-send" title="Send">➤</button>
+    </div>
+  </div>
+</div>
+<script src="/vendor/leaflet.js"></script>
+<script src="/vendor/leaflet.markercluster.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
